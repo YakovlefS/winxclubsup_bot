@@ -1,143 +1,141 @@
-import os, json
+import json
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from typing import List, Tuple
+from google.oauth2.service_account import Credentials
 
-DEFAULT_ITEMS = ["Булла_Оранж", "Булла_Ред", "Клеймо", "Галун", "Руны", "Ключи", "Кристалл"]
+SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
+GOOGLE_CREDENTIALS = None
+
+def _creds():
+    global GOOGLE_CREDENTIALS
+    if GOOGLE_CREDENTIALS is None:
+        import os
+        GOOGLE_CREDENTIALS = os.getenv("GOOGLE_CREDENTIALS")
+    if not GOOGLE_CREDENTIALS:
+        return None
+    data = json.loads(GOOGLE_CREDENTIALS)
+    return Credentials.from_service_account_info(data, scopes=SCOPES)
 
 class GSheetWrapper:
-    def __init__(self, sheet_id=None):
-        self.sheet_id = sheet_id or os.getenv("GSHEET_ID")
-        self.client = None
+    def __init__(self, sheet_id: str):
+        self.sheet_id = sheet_id
+        self.gc = None
         self.sheet = None
-        if self.sheet_id:
-            self._authorize()
+        creds = _creds()
+        if creds:
+            self.gc = gspread.authorize(creds)
+            self.sheet = self.gc.open_by_key(sheet_id)
 
-    def _authorize(self):
-        scope = ['https://www.googleapis.com/auth/spreadsheets', 'https://www.googleapis.com/auth/drive']
-        creds_env = os.getenv("GOOGLE_CREDENTIALS")
-        if creds_env:
-            creds = json.loads(creds_env)
-            credentials = ServiceAccountCredentials.from_json_keyfile_dict(creds, scope)
-        elif os.path.exists("service_account.json"):
-            credentials = ServiceAccountCredentials.from_json_keyfile_name("service_account.json", scope)
-        else:
-            raise RuntimeError("No Google credentials: set GOOGLE_CREDENTIALS or provide service_account.json")
-        self.client = gspread.authorize(credentials)
-        self.sheet = self.client.open_by_key(self.sheet_id)
-
+    # ---------- Общие вкладки ----------
     def ensure_tabs(self):
-        required = ["Игроки","История БМ","Аукцион","Отсутствия","Лог","Аналитика"]
-        existing = [ws.title for ws in self.sheet.worksheets()]
-        for name in required:
+        if not self.sheet:
+            return
+        needed = {"Игроки": ["tg_id","telegram","nick","old_nicks","class","current_bm","bm_updated"],
+                  "Аукцион": ["Булла_Ред","Клеймо","Галун"],
+                  "Логи": ["ts","tg_id","nick","action","data"],
+                  "Отсутствия": ["date","nick","telegram","reason"]}
+        existing = {ws.title for ws in self.sheet.worksheets()}
+        for name, header in needed.items():
             if name not in existing:
-                self.sheet.add_worksheet(title=name, rows=200, cols=60)
-        players = self.sheet.worksheet("Игроки")
-        players.update("A1:G1", [["tg_id","telegram","nick","old_nicks","class","current_bm","bm_updated"]])
-        hist = self.sheet.worksheet("История БМ")
-        hist.update("A1:G1", [["tg_id","nick","class","old_bm","new_bm","diff","ts"]])
-        auction = self.sheet.worksheet("Аукцион")
-        if not auction.row_values(1):
-            auction.update("A1", [DEFAULT_ITEMS])
+                self.sheet.add_worksheet(title=name, rows=1000, cols=40)
+            ws = self.sheet.worksheet(name)
+            vals = ws.get_all_values()
+            if not vals:
+                ws.append_row(header, value_input_option="USER_ENTERED")
 
-    # ---- players ----
-    def update_player(self, player):
+    # ---------- Игроки ----------
+    def update_player(self, player: dict):
         ws = self.sheet.worksheet("Игроки")
-        ids = [r for r in ws.col_values(1)[1:] if r.strip()]
-        idx_map = {int(v): i+2 for i,v in enumerate(ids)} if ids else {}
-        row = idx_map.get(player["tg_id"])
-        values = [[player["tg_id"], player["telegram"], player["nick"], player.get("old_nicks",""), player.get("class",""), player.get("current_bm",""), player.get("bm_updated","")]]
-        if row: ws.update(f"A{row}:G{row}", values)
-        else: ws.append_row(values[0])
+        data = ws.get_all_values()
+        header = data[0]
+        idx = {h:i for i,h in enumerate(header)}
+        row_i = None
+        if "tg_id" in idx:
+            for i, r in enumerate(data[1:], start=2):
+                if len(r) > idx["tg_id"] and r[idx["tg_id"]] == str(player.get("tg_id","")):
+                    row_i = i
+                    break
+        row = [""]*len(header)
+        row[idx["tg_id"]] = str(player.get("tg_id","") or "")
+        row[idx["telegram"]] = player.get("telegram","") or ""
+        row[idx["nick"]] = player.get("nick","") or ""
+        row[idx["old_nicks"]] = player.get("old_nicks","") or ""
+        row[idx["class"]] = player.get("class","") or ""
+        row[idx["current_bm"]] = str(player.get("current_bm","") or "")
+        if "bm_updated" in idx:
+            row[idx["bm_updated"]] = player.get("bm_updated","") or ""
+        if row_i:
+            ws.update(f"A{row_i}:{chr(64+len(header))}{row_i}", [row])
+        else:
+            ws.append_row(row, value_input_option="USER_ENTERED")
 
-    def rename_everywhere(self, old_nick, new_nick):
-        # История БМ
-        try:
-            ws = self.sheet.worksheet("История БМ"); data = ws.get_all_values()
-            if data:
-                header = data[0]; nick_idx = header.index("nick") if "nick" in header else 1
-                changed=False
-                for i in range(1,len(data)):
-                    if len(data[i])>nick_idx and data[i][nick_idx]==old_nick:
-                        data[i][nick_idx]=new_nick; changed=True
-                if changed: ws.clear(); ws.update("A1", data)
-        except: pass
-        # Отсутствия
-        try:
-            ws = self.sheet.worksheet("Отсутствия"); data = ws.get_all_values()
-            if data:
-                nick_idx = 1; changed=False
-                for i in range(1,len(data)):
-                    if len(data[i])>nick_idx and data[i][nick_idx]==old_nick:
-                        data[i][nick_idx]=new_nick; changed=True
-                if changed: ws.clear(); ws.update("A1", data)
-        except: pass
-        # Аукцион
-        try:
-            ws = self.sheet.worksheet("Аукцион"); data = ws.get_all_values()
-            if data:
-                header = data[0]
-                for c in range(len(header)):
-                    col = [row[c] if len(row)>c else '' for row in data[1:]]
-                    changed=False
-                    for r in range(len(col)):
-                        if col[r]==old_nick:
-                            col[r]=new_nick; changed=True
-                    if changed:
-                        max_len = max(len(col), len(data)-1)
-                        while len(data)-1 < max_len: data.append(['']*len(header))
-                        for i in range(max_len): data[i+1][c] = col[i] if i < len(col) else ''
-                ws.clear(); ws.update("A1", data)
-        except: pass
+    def append_bm_history(self, rec: dict):
+        ws = self.sheet.worksheet("Логи")
+        ws.append_row([rec.get("ts",""), rec.get("tg_id",""), rec.get("nick",""), "bm_update",
+                       f'{rec.get("old_bm","")}->{rec.get("new_bm","")}({rec.get("diff","")})'],
+                      value_input_option="USER_ENTERED")
 
-    def append_bm_history(self, rec):
-        ws = self.sheet.worksheet("История БМ")
-        ws.append_row([rec["tg_id"], rec["nick"], rec.get("class",""), rec["old_bm"], rec["new_bm"], rec["diff"], rec["ts"]])
+    def write_log(self, ts, tg_id, nick, action, data):
+        ws = self.sheet.worksheet("Логи")
+        ws.append_row([ts, tg_id, nick, action, data], value_input_option="USER_ENTERED")
 
-    # ---- auction core ----
-    def get_auction_matrix(self):
-        ws = self.sheet.worksheet("Аукцион")
-        return ws.get_all_values(), ws
-
-    def write_auction_matrix(self, ws, matrix):
-        ws.clear(); ws.update("A1", matrix)
-
-    # ---- auction items mgmt ----
-    def list_items(self):
-        matrix, _ = self.get_auction_matrix()
-        return matrix[0] if matrix else []
-
-    def add_item(self, name):
-        matrix, ws = self.get_auction_matrix()
-        if not matrix:
-            matrix = [[name]]
-            self.write_auction_matrix(ws, matrix); return True
-        header = matrix[0]
-        if name in header:
-            return False
-        header.append(name)
-        for r in range(1, len(matrix)):
-            while len(matrix[r]) < len(header):
-                matrix[r].append('')
-        matrix[0] = header
-        self.write_auction_matrix(ws, matrix); return True
-
-    def remove_item(self, name):
-        matrix, ws = self.get_auction_matrix()
-        if not matrix: return False
-        header = matrix[0]
-        if name not in header: return False
-        idx = header.index(name)
-        new_matrix = []
-        for row in matrix:
-            new_row = row[:idx] + row[idx+1:]
-            new_matrix.append(new_row)
-        self.write_auction_matrix(ws, new_matrix); return True
-
-    # ---- absence & logs ----
+    # ---------- Отсутствия ----------
     def append_absence(self, date, nick, telegram, reason):
         ws = self.sheet.worksheet("Отсутствия")
-        ws.append_row([date, nick, telegram, reason])
+        ws.append_row([date, nick, telegram, reason], value_input_option="USER_ENTERED")
 
-    def write_log(self, ts, tg_id, nick, action, details):
-        ws = self.sheet.worksheet("Лог")
-        ws.append_row([ts, tg_id, nick, action, details])
+    # ---------- Аукцион ----------
+    def get_auction_matrix(self) -> Tuple[List[List[str]], "gspread.Worksheet"]:
+        ws = self.sheet.worksheet("Аукцион")
+        data = ws.get_all_values()
+        return data, ws
+
+    def write_auction_matrix(self, ws, matrix: List[List[str]]):
+        rng = f"A1:{gspread.utils.rowcol_to_a1(len(matrix), len(matrix[0]))}"
+        ws.update(rng, matrix, value_input_option="USER_ENTERED")
+
+    def rename_everywhere(self, old, new):
+        # Простая замена в очередях
+        data, ws = self.get_auction_matrix()
+        if not data: return
+        header = data[0]
+        for ci in range(len(header)):
+            col = [r[ci] if len(r)>ci else "" for r in data[1:]]
+            changed = False
+            for i, val in enumerate(col):
+                if val == old:
+                    col[i] = new
+                    changed = True
+            if changed:
+                max_len = max(len(col), len(data)-1)
+                while len(data)-1 < max_len: data.append(['']*len(header))
+                for i in range(max_len):
+                    data[i+1][ci] = col[i] if i < len(col) else ""
+        self.write_auction_matrix(ws, data)
+
+    def list_items(self) -> List[str]:
+        data, _ = self.get_auction_matrix()
+        return data[0] if data else []
+
+    def add_item(self, name: str) -> bool:
+        data, ws = self.get_auction_matrix()
+        if not data:
+            data = [[name]]
+        else:
+            if name in data[0]:
+                return False
+            data[0].append(name)
+            for r in range(1, len(data)):
+                data[r].append("")
+        self.write_auction_matrix(ws, data)
+        return True
+
+    def remove_item(self, name: str) -> bool:
+        data, ws = self.get_auction_matrix()
+        if not data or name not in data[0]:
+            return False
+        ci = data[0].index(name)
+        for r in range(len(data)):
+            del data[r][ci]
+        self.write_auction_matrix(ws, data)
+        return True
