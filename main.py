@@ -283,44 +283,17 @@ async def cmd_nick(message: types.Message):
     reply = await message.answer(f"Ник сохранён: {new_nick}")
     schedule_cleanup(message, reply)
 
-@dp.message_handler(commands=["класс", "klass"])
-async def choose_class(message: types.Message):
-    """
-    Команда /класс — выводит клавиатуру выбора класса.
-    Если класс уже выбран — он отмечается ✅
-    """
+@dp.message_handler(commands=["класс","klass"])
+async def cmd_class(message: types.Message):
+    if not in_scope(message, "info"): return
+    tg_id = message.from_user.id
     async with aiosqlite.connect(DB) as conn:
-        cur = await conn.execute(
-            "SELECT class FROM players WHERE tg_id=?", (message.from_user.id,)
-        )
+        cur = await conn.execute("SELECT class FROM players WHERE tg_id=?", (tg_id,))
         row = await cur.fetchone()
-        user_class = row[0] if row else None
-
-    # Формируем клавиатуру с выделением текущего класса
-    buttons = []
-    for cls in CLASS_LIST:
-        if cls == user_class:
-            btn_text = f"✅ {cls}"
-        else:
-            btn_text = cls
-        buttons.append(
-            types.InlineKeyboardButton(text=btn_text, callback_data=f"class_{cls}")
-        )
-
-    markup = types.InlineKeyboardMarkup(row_width=3)
-    markup.add(*buttons)
-    markup.add(
-        types.InlineKeyboardButton("🔙 Назад", callback_data="class_back"),
-        types.InlineKeyboardButton("✅ Готово", callback_data="class_done"),
-    )
-
-    msg = await message.reply("🎓 Выбери свой класс:", reply_markup=markup)
-    # Удаляем команду игрока сразу, сообщение бота — через 30 секунд
-    try:
-        await bot.delete_message(message.chat.id, message.message_id)
-    except Exception:
-        pass
-    asyncio.create_task(delete_later(msg.chat.id, msg.message_id, 30))
+    current = row[0] if row and row[0] else "-"
+    CLASS_STATE[tg_id] = None
+    reply = await message.answer(f"🧙 Текущий класс: {current}\\nВыбери новый класс:", reply_markup=class_keyboard())
+    schedule_cleanup(message, reply, user_delay=0, bot_delay=30)
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith("class:"))
 async def class_pick(callback_query: types.CallbackQuery):
@@ -393,48 +366,17 @@ async def cmd_bm(message: types.Message):
     reply = await message.answer(f"БМ обновлён: {old_bm} → {new_bm} (прирост {new_bm-old_bm})")
     schedule_cleanup(message, reply)
 
-@dp.message_handler(commands=["профиль"])
-async def show_profile(message: types.Message):
-    target_id = message.from_user.id
-    target_nick = None
-
-    # Если указали ник в команде
-    args = message.get_args().strip()
-    if args:
-        target_nick = args
-
-    # Если ответ на сообщение
-    elif message.reply_to_message:
-        target_id = message.reply_to_message.from_user.id
-
+@dp.message_handler(commands=["профиль","profil"])
+async def cmd_profile(message: types.Message):
+    if not in_scope(message, "info"): return
+    tg_id = message.from_user.id
     async with aiosqlite.connect(DB) as conn:
-        if target_nick:
-            cur = await conn.execute("SELECT nick, old_nicks, class, bm, bm_updated FROM players WHERE nick LIKE ?", (target_nick,))
-        else:
-            cur = await conn.execute("SELECT nick, old_nicks, class, bm, bm_updated FROM players WHERE tg_id=?", (target_id,))
+        cur = await conn.execute("SELECT username,nick,old_nicks,class,bm,bm_updated FROM players WHERE tg_id=?", (tg_id,))
         row = await cur.fetchone()
-
     if not row:
-        msg = await message.reply("⚠️ Профиль не найден.")
-        asyncio.create_task(delete_later(msg.chat.id, msg.message_id, 10))
-        return
-
-    nick, old_nicks, cls, bm, updated = row
-    bm_str = f"{bm:,}".replace(",", " ") if bm else "-"
-    old_nicks = old_nicks if old_nicks and old_nicks.strip() else "-"
-    updated = updated if updated and updated.strip() else "-"
-
-    text = (
-        "🧙‍♂️ *Профиль игрока*\n\n"
-        f"🎮 Ник: *{nick}*\n"
-        f"🕰 Старые ники: {old_nicks}\n"
-        f"⚔️ Класс: {cls}\n"
-        f"💪 Боевой рейтинг: *{bm_str}*\n"
-        f"📅 Последнее обновление: {updated}"
-    )
-
-    msg = await message.reply(text, parse_mode="Markdown")
-    asyncio.create_task(delete_later(msg.chat.id, msg.message_id, 15))
+        reply = await message.answer("Профиль не найден. Зарегистрируй ник: /ник <имя>"); return schedule_cleanup(message, reply)
+    reply = await message.answer(f"Ник: {row[1]}\\nСтарые ники: {row[2] or '-'}\\nКласс: {row[3] or '-'}\\nБМ: {row[4] or '-'}\\nОбновлено: {row[5] or '-'}")
+    schedule_cleanup(message, reply, bot_delay=25)
 
 @dp.message_handler(commands=["топбм","topbm"])
 async def cmd_topbm(message: types.Message):
@@ -625,52 +567,24 @@ async def qsel_ok(callback_query: types.CallbackQuery):
     tg_id = callback_query.from_user.id
     sel = list(QUEUE_STATE.get(tg_id, set()))
     username = callback_query.from_user.username or callback_query.from_user.full_name
-    if not sel:
-        return await callback_query.answer("Сначала выбери предметы")
-
+    if not sel: return await callback_query.answer("Сначала выбери предметы")
     try:
         matrix, _ = gsheet.get_auction_matrix()
         header = matrix[0] if matrix else []
         blocks = []
-
         for item in sel:
-            if item not in header:
-                continue
-
+            if item not in header: continue
             ci = header.index(item)
-            col = [r[ci] if len(r) > ci else '' for r in matrix[1:]]
+            col = [r[ci] if len(r)>ci else '' for r in matrix[1:]]
             col = [c for c in col if c]
-            user_pos = None
-            formatted_lines = []
-
-            for i, name in enumerate(col, start=1):
-                # обычные цифры вместо эмодзи
-                if username and name.lower() == username.lower():
-                    formatted_lines.append(f"{i}. **@{name}**")
-                    user_pos = i
-                else:
-                    formatted_lines.append(f"{i}. @{name}")
-
-            if not formatted_lines:
-                text_block = f"💎 Очередь по предмету: *{item}*\n━━━━━━━━━━━━━━━━━━\n(пока пуста)\n━━━━━━━━━━━━━━━━━━"
-            else:
-                text_block = (
-                    f"💎 Очередь по предмету: *{item}*\n━━━━━━━━━━━━━━━━━━\n"
-                    + "\n".join(formatted_lines)
-                )
-                if user_pos:
-                    text_block += f"\n\n📍 Твоя позиция: №{user_pos}"
-                text_block += "\n━━━━━━━━━━━━━━━━━━"
-
-            blocks.append(text_block)
-
-        final_text = f"📋 Запросил: @{username}\n\n" + "\n\n".join(blocks)
-        msg = await callback_query.message.edit_text(final_text, parse_mode="Markdown")
-        asyncio.create_task(delete_later(msg.chat.id, msg.message_id, 15))
-        await callback_query.answer("Очередь обновлена")
-
+            block = "Очередь — {}:\\n{}".format(item, "\\n".join("{}. {}".format(i+1,v) for i,v in enumerate(col))) if col else f"Очередь — {item}: пусто"
+            blocks.append(block)
+        text = (f"Запросил: @{callback_query.from_user.username}\\n\\n" if callback_query.from_user.username else f"Запросил: {username}\\n\\n") + ("\\n\\n".join(blocks) if blocks else "Нет выбранных предметов.")
+        await callback_query.message.edit_text(text)
+        asyncio.create_task(delete_later(callback_query.message.chat.id, callback_query.message.message_id, 15))
+        await callback_query.answer("Готово")
     except Exception as e:
-        await callback_query.message.edit_text(f"⚠️ Ошибка: {e}")
+        await callback_query.message.edit_text("Ошибка: " + str(e))
 
 # ========= Аукцион: выйти / удалить / забрал =========
 @dp.message_handler(commands=["выйти","viyti"])
@@ -852,54 +766,6 @@ async def list_items_cmd(message: types.Message):
     reply = await message.answer(text)
     schedule_cleanup(message, reply)
 
-@dp.message_handler(commands=["синхронизировать"])
-async def sync_data(message: types.Message):
-    if not (is_leader(message) or is_officer(message)):
-        return await message.reply("❌ Команда доступна только лидеру и офицерам.")
-
-    if not gsheet:
-        return await message.reply("⚠️ Google Sheets недоступен.")
-
-    async with aiosqlite.connect(DB) as conn:
-        players_ws = gsheet.sheet.worksheet("Игроки")
-        data = players_ws.get_all_values()
-        header = data[0]
-        nick_idx = header.index("nick")
-        tg_idx = header.index("tg_id") if "tg_id" in header else 0
-        class_idx = header.index("class")
-        bm_idx = header.index("current_bm")
-
-        count = 0
-        for row in data[1:]:
-            if len(row) <= nick_idx:
-                continue
-            nick = row[nick_idx]
-            tg_id = int(row[tg_idx]) if row[tg_idx].isdigit() else None
-            cls = row[class_idx]
-            bm = int(row[bm_idx]) if row[bm_idx].isdigit() else 0
-            await conn.execute(
-                "INSERT OR REPLACE INTO players(tg_id,nick,class,bm) VALUES(?,?,?,?)",
-                (tg_id, nick, cls, bm),
-            )
-            count += 1
-        await conn.commit()
-
-        # settings
-        try:
-            ws = gsheet.sheet.worksheet("settings")
-            settings = ws.get_all_records()
-            for row in settings:
-                await conn.execute(
-                    "INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
-                    (row["key"], str(row["value"]))
-                )
-            await conn.commit()
-        except Exception as e:
-            print("settings not found:", e)
-
-    msg = await message.reply(f"✅ Синхронизация завершена\n👥 Обновлено игроков: {count}")
-    asyncio.create_task(delete_later(msg.chat.id, msg.message_id, 15))
-
 # ========= Startup =========
 async def on_startup(_):
     await init_db()
@@ -918,29 +784,3 @@ async def on_startup(_):
 
 if __name__ == "__main__":
     executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
-
-    from aiogram import executor
-
-WEBHOOK_HOST = "https://<твой-проект>.up.railway.app"
-WEBHOOK_PATH = f"/bot/{BOT_TOKEN}"
-WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
-
-async def on_startup(dp):
-    await bot.set_webhook(WEBHOOK_URL)
-    print("✅ Webhook установлен")
-
-async def on_shutdown(dp):
-    await bot.delete_webhook()
-    print("🛑 Webhook удалён")
-
-if __name__ == "__main__":
-    executor.start_webhook(
-        dispatcher=dp,
-        webhook_path=WEBHOOK_PATH,
-        on_startup=on_startup,
-        on_shutdown=on_shutdown,
-        skip_updates=True,
-        host="0.0.0.0",
-        port=int(os.getenv("PORT", 8080))
-    )
-
