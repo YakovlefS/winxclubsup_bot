@@ -619,37 +619,40 @@ async def qsel_ok(callback_query: types.CallbackQuery):
         matrix, _ = gsheet.get_auction_matrix()
         header = matrix[0] if matrix else []
         blocks = []
+
         for item in sel:
             if item not in header:
                 continue
+
             ci = header.index(item)
             col = [r[ci] if len(r) > ci else '' for r in matrix[1:]]
             col = [c for c in col if c]
             user_pos = None
+            formatted_lines = []
 
-            # красиво нумеруем и выделяем
-                formatted_lines = []
-        for i, name in enumerate(col, start=1):
-            # обычные цифры вместо эмодзи
-            if username and name.lower() == username.lower():
-                formatted_lines.append(f"{i}. **@{name}**")
-                user_pos = i
-            else:
-                formatted_lines.append(f"{i}. @{name}")
+            for i, name in enumerate(col, start=1):
+                # обычные цифры вместо эмодзи
+                if username and name.lower() == username.lower():
+                    formatted_lines.append(f"{i}. **@{name}**")
+                    user_pos = i
+                else:
+                    formatted_lines.append(f"{i}. @{name}")
 
             if not formatted_lines:
-                text_block = f"🎯 Очередь — *{item}*\n(пока пуста)"
+                text_block = f"💎 Очередь по предмету: *{item}*\n━━━━━━━━━━━━━━━━━━\n(пока пуста)\n━━━━━━━━━━━━━━━━━━"
             else:
-                text_block = f"🎯 Очередь — *{item}*\n" + "\n".join(formatted_lines)
+                text_block = (
+                    f"💎 Очередь по предмету: *{item}*\n━━━━━━━━━━━━━━━━━━\n"
+                    + "\n".join(formatted_lines)
+                )
                 if user_pos:
                     text_block += f"\n\n📍 Твоя позиция: №{user_pos}"
+                text_block += "\n━━━━━━━━━━━━━━━━━━"
 
             blocks.append(text_block)
 
-        text = "\n\n----------------------\n\n".join(blocks)
-        text = f"Запросил: @{username}\n\n" + text
-
-        msg = await callback_query.message.edit_text(text, parse_mode="Markdown")
+        final_text = f"📋 Запросил: @{username}\n\n" + "\n\n".join(blocks)
+        msg = await callback_query.message.edit_text(final_text, parse_mode="Markdown")
         asyncio.create_task(delete_later(msg.chat.id, msg.message_id, 15))
         await callback_query.answer("Очередь обновлена")
 
