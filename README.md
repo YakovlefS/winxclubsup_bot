@@ -15,8 +15,8 @@
 2. Railway → **New Project → Deploy from GitHub Repo** → привяжи репозиторий.
 3. В **Variables** добавь:
    - `BOT_TOKEN` — токен бота из BotFather
-   - `GSHEET_ID` — ID таблицы (`12VXDjIS_crjN1b_c1w2_tk5HnfhXfejFWJQBiCZ3klc`)
-   - `LEADER_ID` — `@yakovlef`
+   - `GSHEET_ID` — ID таблицы (``)
+   - `LEADER_ID` — ``
    - `GOOGLE_CREDENTIALS` — JSON сервисного аккаунта в 1 строку (см. ниже)
    - `STARTUP_ANNOUNCE` — `1`
 4. Deploy. Procfile запускает воркер: `worker: python main.py`.
