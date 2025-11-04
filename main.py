@@ -283,30 +283,43 @@ async def cmd_nick(message: types.Message):
     reply = await message.answer(f"Ник сохранён: {new_nick}")
     schedule_cleanup(message, reply)
 
-@dp.message_handler(commands=["класс","klass"])
+@dp.message_handler(commands=["класс", "klass"])
 async def choose_class(message: types.Message):
+    """
+    Команда /класс — выводит клавиатуру выбора класса.
+    Если класс уже выбран — он отмечается ✅
+    """
     async with aiosqlite.connect(DB) as conn:
-        cur = await conn.execute("SELECT class FROM players WHERE tg_id=?", (message.from_user.id,))
+        cur = await conn.execute(
+            "SELECT class FROM players WHERE tg_id=?", (message.from_user.id,)
+        )
         row = await cur.fetchone()
         user_class = row[0] if row else None
 
+    # Формируем клавиатуру с выделением текущего класса
     buttons = []
     for cls in CLASS_LIST:
         if cls == user_class:
             btn_text = f"✅ {cls}"
         else:
             btn_text = cls
-        buttons.append(types.InlineKeyboardButton(text=btn_text, callback_data=f"class_{cls}"))
+        buttons.append(
+            types.InlineKeyboardButton(text=btn_text, callback_data=f"class_{cls}")
+        )
 
-    # Разбиваем по 3 кнопки в ряд
     markup = types.InlineKeyboardMarkup(row_width=3)
     markup.add(*buttons)
     markup.add(
         types.InlineKeyboardButton("🔙 Назад", callback_data="class_back"),
-        types.InlineKeyboardButton("✅ Готово", callback_data="class_done")
+        types.InlineKeyboardButton("✅ Готово", callback_data="class_done"),
     )
 
     msg = await message.reply("🎓 Выбери свой класс:", reply_markup=markup)
+    # Удаляем команду игрока сразу, сообщение бота — через 30 секунд
+    try:
+        await bot.delete_message(message.chat.id, message.message_id)
+    except Exception:
+        pass
     asyncio.create_task(delete_later(msg.chat.id, msg.message_id, 30))
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith("class:"))
