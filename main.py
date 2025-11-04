@@ -161,6 +161,79 @@ async def ensure_db():
             "nick TEXT, old_nicks TEXT, class TEXT, bm INTEGER, bm_updated TEXT)"
         )
         await conn.commit()
+# ========= Аукцион: запись =========
+AUC_STATE = {}
+@dp.message_handler(commands=["аук","auk"])
+async def cmd_auction(message: types.Message):
+    if not in_scope(message, "auction"): return
+    if not (gsheet and gsheet.sheet):
+        reply = await message.answer("Google Sheets недоступен. Проверь GOOGLE_CREDENTIALS и GSHEET_ID."); return schedule_cleanup(message, reply)
+    header = get_items_safe()
+    if not header:
+        reply = await message.answer("Лист 'Аукцион' пуст или без шапки."); return schedule_cleanup(message, reply)
+    tg_id = message.from_user.id
+    AUC_STATE[tg_id] = set()
+    reply = await message.answer("🎯 Выбери предметы аукциона (можно несколько):", reply_markup=multi_keyboard(header, AUC_STATE[tg_id], "auc", "✅ Подтвердить"))
+    schedule_cleanup(message, reply, user_delay=0, bot_delay=60)
+
+@dp.callback_query_handler(lambda c: c.data and c.data.startswith("auc:"))
+async def auc_toggle(callback_query: types.CallbackQuery):
+    tg_id = callback_query.from_user.id
+    item = callback_query.data.split(":",1)[1]
+    header = get_items_safe()
+    if item not in header:
+        return await callback_query.answer("Этот предмет сейчас недоступен")
+    sel = AUC_STATE.setdefault(tg_id, set())
+    if item in sel: sel.remove(item); note=f"Снято: {item}"
+    else: sel.add(item); note=f"Выбрано: {item}"
+    await callback_query.message.edit_reply_markup(reply_markup=multi_keyboard(header, sel, "auc", "✅ Подтвердить"))
+    await callback_query.answer(note)
+
+@dp.callback_query_handler(lambda c: c.data == "auc_back")
+async def auc_back(callback_query: types.CallbackQuery):
+    tg_id = callback_query.from_user.id
+    AUC_STATE[tg_id] = set()
+    header = get_items_safe()
+    await callback_query.message.edit_reply_markup(reply_markup=multi_keyboard(header, AUC_STATE[tg_id], "auc", "✅ Подтвердить"))
+    await callback_query.answer("Выбор сброшен")
+
+@dp.callback_query_handler(lambda c: c.data == "auc_ok")
+async def auc_ok(callback_query: types.CallbackQuery):
+    tg_id = callback_query.from_user.id
+    sel = AUC_STATE.get(tg_id, set())
+    if not sel: return await callback_query.answer("Сначала выбери предметы")
+    async with aiosqlite.connect(DB) as conn:
+        cur = await conn.execute("SELECT nick FROM players WHERE tg_id=?", (tg_id,))
+        row = await cur.fetchone()
+        if not row or not row[0]: return await callback_query.answer("Сначала зарегистрируй ник: /ник <имя>", show_alert=True)
+        nick = row[0]
+    try:
+        matrix, ws = gsheet.get_auction_matrix()
+        header = matrix[0] if matrix else []
+        msgs = []
+        for item in sel:
+            if item not in header: continue
+            ci = header.index(item)
+            col = [r[ci] if len(r)>ci else '' for r in matrix[1:]]
+            col = [c for c in col if c]
+            if nick in col:
+                col = [c for c in col if c != nick]
+                col.append(nick)
+                msgs.append(f"🔁 {item} — перемещён в конец (место №{len(col)})")
+            else:
+                col.append(nick)
+                msgs.append(f"✅ {item} — добавлен (место №{len(col)})")
+            max_len = max(len(col), len(matrix)-1)
+            while len(matrix)-1 < max_len: matrix.append(['']*len(header))
+            for i in range(max_len): matrix[i+1][ci] = col[i] if i < len(col) else ''
+        gsheet.write_auction_matrix(ws, matrix)
+        gsheet.write_log(datetime.datetime.utcnow().isoformat(), tg_id, nick, "auction_join", ", ".join(sel))
+    except Exception as e:
+        return await callback_query.message.edit_text("Ошибка Google Sheets: " + str(e))
+    AUC_STATE[tg_id] = set()
+    await callback_query.message.edit_text("\\n".join(msgs))
+    asyncio.create_task(delete_later(callback_query.message.chat.id, callback_query.message.message_id, 15))
+    await callback_query.answer("Сохранено")
 
 # ========== CLASS SELECT (/класс) ==========
 @dp.message_handler(commands=["класс","klass"])
