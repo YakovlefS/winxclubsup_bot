@@ -630,13 +630,12 @@ async def qsel_ok(callback_query: types.CallbackQuery):
             # красиво нумеруем и выделяем
             formatted_lines = []
             for i, name in enumerate(col, start=1):
-            # обычные цифры вместо эмодзи
-                if username and name.lower() == username.lower():
-                formatted_lines.append(f"{i}. **@{name}**")
-                user_pos = i
-            else:
-                formatted_lines.append(f"{i}. @{name}")
-
+    # обычные цифры вместо эмодзи
+    if username and name.lower() == username.lower():
+        formatted_lines.append(f"{i}. **@{name}**")
+        user_pos = i
+    else:
+        formatted_lines.append(f"{i}. @{name}")
 
             if not formatted_lines:
                 text_block = f"🎯 Очередь — *{item}*\n(пока пуста)"
