@@ -918,3 +918,29 @@ async def on_startup(_):
 
 if __name__ == "__main__":
     executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
+
+    from aiogram import executor
+
+WEBHOOK_HOST = "https://<твой-проект>.up.railway.app"
+WEBHOOK_PATH = f"/bot/{BOT_TOKEN}"
+WEBHOOK_URL = f"{WEBHOOK_HOST}{WEBHOOK_PATH}"
+
+async def on_startup(dp):
+    await bot.set_webhook(WEBHOOK_URL)
+    print("✅ Webhook установлен")
+
+async def on_shutdown(dp):
+    await bot.delete_webhook()
+    print("🛑 Webhook удалён")
+
+if __name__ == "__main__":
+    executor.start_webhook(
+        dispatcher=dp,
+        webhook_path=WEBHOOK_PATH,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+        skip_updates=True,
+        host="0.0.0.0",
+        port=int(os.getenv("PORT", 8080))
+    )
+
