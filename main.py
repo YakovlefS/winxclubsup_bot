@@ -791,6 +791,54 @@ async def list_items_cmd(message: types.Message):
     reply = await message.answer(text)
     schedule_cleanup(message, reply)
 
+@dp.message_handler(commands=["синхронизировать"])
+async def sync_data(message: types.Message):
+    if not (is_leader(message) or is_officer(message)):
+        return await message.reply("❌ Команда доступна только лидеру и офицерам.")
+
+    if not gsheet:
+        return await message.reply("⚠️ Google Sheets недоступен.")
+
+    async with aiosqlite.connect(DB) as conn:
+        players_ws = gsheet.sheet.worksheet("Игроки")
+        data = players_ws.get_all_values()
+        header = data[0]
+        nick_idx = header.index("nick")
+        tg_idx = header.index("tg_id") if "tg_id" in header else 0
+        class_idx = header.index("class")
+        bm_idx = header.index("current_bm")
+
+        count = 0
+        for row in data[1:]:
+            if len(row) <= nick_idx:
+                continue
+            nick = row[nick_idx]
+            tg_id = int(row[tg_idx]) if row[tg_idx].isdigit() else None
+            cls = row[class_idx]
+            bm = int(row[bm_idx]) if row[bm_idx].isdigit() else 0
+            await conn.execute(
+                "INSERT OR REPLACE INTO players(tg_id,nick,class,bm) VALUES(?,?,?,?)",
+                (tg_id, nick, cls, bm),
+            )
+            count += 1
+        await conn.commit()
+
+        # settings
+        try:
+            ws = gsheet.sheet.worksheet("settings")
+            settings = ws.get_all_records()
+            for row in settings:
+                await conn.execute(
+                    "INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)",
+                    (row["key"], str(row["value"]))
+                )
+            await conn.commit()
+        except Exception as e:
+            print("settings not found:", e)
+
+    msg = await message.reply(f"✅ Синхронизация завершена\n👥 Обновлено игроков: {count}")
+    asyncio.create_task(delete_later(msg.chat.id, msg.message_id, 15))
+
 # ========= Startup =========
 async def on_startup(_):
     await init_db()
