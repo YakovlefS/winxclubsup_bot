@@ -382,17 +382,32 @@ async def cmd_bm(message: types.Message):
 
 @dp.message_handler(commands=["профиль"])
 async def show_profile(message: types.Message):
+    target_id = message.from_user.id
+    target_nick = None
+
+    # Если указали ник в команде
+    args = message.get_args().strip()
+    if args:
+        target_nick = args
+
+    # Если ответ на сообщение
+    elif message.reply_to_message:
+        target_id = message.reply_to_message.from_user.id
+
     async with aiosqlite.connect(DB) as conn:
-        cur = await conn.execute("SELECT nick, old_nicks, class, bm, bm_updated FROM players WHERE tg_id=?", (message.from_user.id,))
+        if target_nick:
+            cur = await conn.execute("SELECT nick, old_nicks, class, bm, bm_updated FROM players WHERE nick LIKE ?", (target_nick,))
+        else:
+            cur = await conn.execute("SELECT nick, old_nicks, class, bm, bm_updated FROM players WHERE tg_id=?", (target_id,))
         row = await cur.fetchone()
 
     if not row:
-        msg = await message.reply("⚠️ Профиль не найден. Используй /ник, /класс и /бм для регистрации.")
-        asyncio.create_task(delete_later(msg.chat.id, msg.message_id, 15))
+        msg = await message.reply("⚠️ Профиль не найден.")
+        asyncio.create_task(delete_later(msg.chat.id, msg.message_id, 10))
         return
 
     nick, old_nicks, cls, bm, updated = row
-    bm_str = f"{bm:,}".replace(",", " ")
+    bm_str = f"{bm:,}".replace(",", " ") if bm else "-"
     old_nicks = old_nicks if old_nicks and old_nicks.strip() else "-"
     updated = updated if updated and updated.strip() else "-"
 
@@ -615,12 +630,13 @@ async def qsel_ok(callback_query: types.CallbackQuery):
             # красиво нумеруем и выделяем
             formatted_lines = []
             for i, name in enumerate(col, start=1):
-                marker = f"{i}\uFE0F\u20E3"  # emoji цифра
+            # обычные цифры вместо эмодзи
                 if username and name.lower() == username.lower():
-                    formatted_lines.append(f"{marker} **@{name}**")
-                    user_pos = i
-                else:
-                    formatted_lines.append(f"{marker} @{name}")
+                formatted_lines.append(f"{i}. **@{name}**")
+                user_pos = i
+            else:
+                formatted_lines.append(f"{i}. @{name}")
+
 
             if not formatted_lines:
                 text_block = f"🎯 Очередь — *{item}*\n(пока пуста)"
