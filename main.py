@@ -492,5 +492,3 @@ if __name__ == "__main__":
     loop.run_until_complete(auto_sync())
     print("✅ Бот запущен в режиме polling")
     executor.start_polling(dp, skip_updates=True)
-
-    )
