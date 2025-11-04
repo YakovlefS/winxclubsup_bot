@@ -789,7 +789,14 @@ async def manual_sync(message: types.Message):
                     continue
                 await conn.execute(
                     "INSERT OR REPLACE INTO players(tg_id,nick,class,bm,bm_updated) VALUES(?,?,?,?,?)",
-                    (tg_id, nick, cls,_
+                    (tg_id, nick, cls, bm, bm_updated)
+                )
+                count += 1
+            await conn.commit()
+
+        await reply.edit_text(f"✅ Синхронизация завершена успешно\nОбновлено игроков: {count}")
+    except Exception as e:
+        await reply.edit_text(f"⚠️ Ошибка синхронизации: {e}")
 
 # ========= Startup =========
 async def on_startup(_):
