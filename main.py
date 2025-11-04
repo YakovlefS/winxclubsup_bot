@@ -366,17 +366,33 @@ async def cmd_bm(message: types.Message):
     reply = await message.answer(f"БМ обновлён: {old_bm} → {new_bm} (прирост {new_bm-old_bm})")
     schedule_cleanup(message, reply)
 
-@dp.message_handler(commands=["профиль","profil"])
-async def cmd_profile(message: types.Message):
-    if not in_scope(message, "info"): return
-    tg_id = message.from_user.id
+@dp.message_handler(commands=["профиль"])
+async def show_profile(message: types.Message):
     async with aiosqlite.connect(DB) as conn:
-        cur = await conn.execute("SELECT username,nick,old_nicks,class,bm,bm_updated FROM players WHERE tg_id=?", (tg_id,))
+        cur = await conn.execute("SELECT nick, old_nicks, class, bm, bm_updated FROM players WHERE tg_id=?", (message.from_user.id,))
         row = await cur.fetchone()
+
     if not row:
-        reply = await message.answer("Профиль не найден. Зарегистрируй ник: /ник <имя>"); return schedule_cleanup(message, reply)
-    reply = await message.answer(f"Ник: {row[1]}\\nСтарые ники: {row[2] or '-'}\\nКласс: {row[3] or '-'}\\nБМ: {row[4] or '-'}\\nОбновлено: {row[5] or '-'}")
-    schedule_cleanup(message, reply, bot_delay=25)
+        msg = await message.reply("⚠️ Профиль не найден. Используй /ник, /класс и /бм для регистрации.")
+        asyncio.create_task(delete_later(msg.chat.id, msg.message_id, 15))
+        return
+
+    nick, old_nicks, cls, bm, updated = row
+    bm_str = f"{bm:,}".replace(",", " ")
+    old_nicks = old_nicks if old_nicks and old_nicks.strip() else "-"
+    updated = updated if updated and updated.strip() else "-"
+
+    text = (
+        "🧙‍♂️ *Профиль игрока*\n\n"
+        f"🎮 Ник: *{nick}*\n"
+        f"🕰 Старые ники: {old_nicks}\n"
+        f"⚔️ Класс: {cls}\n"
+        f"💪 Боевой рейтинг: *{bm_str}*\n"
+        f"📅 Последнее обновление: {updated}"
+    )
+
+    msg = await message.reply(text, parse_mode="Markdown")
+    asyncio.create_task(delete_later(msg.chat.id, msg.message_id, 15))
 
 @dp.message_handler(commands=["топбм","topbm"])
 async def cmd_topbm(message: types.Message):
@@ -580,36 +596,36 @@ async def qsel_ok(callback_query: types.CallbackQuery):
             ci = header.index(item)
             col = [r[ci] if len(r) > ci else '' for r in matrix[1:]]
             col = [c for c in col if c]
-            display_lines = []
             user_pos = None
 
-            for i, v in enumerate(col):
-                if username and v.lower() == username.lower():
-                    display_lines.append(f"{i+1}. **{v}**")
-                    user_pos = i + 1
+            # красиво нумеруем и выделяем
+            formatted_lines = []
+            for i, name in enumerate(col, start=1):
+                marker = f"{i}\uFE0F\u20E3"  # emoji цифра
+                if username and name.lower() == username.lower():
+                    formatted_lines.append(f"{marker} **@{name}**")
+                    user_pos = i
                 else:
-                    display_lines.append(f"{i+1}. {v}")
+                    formatted_lines.append(f"{marker} @{name}")
 
-            if not col:
-                block = f"Очередь — {item}: пусто"
+            if not formatted_lines:
+                text_block = f"🎯 Очередь — *{item}*\n(пока пуста)"
             else:
-                block = f"Очередь — {item}:\n" + "\n".join(display_lines)
+                text_block = f"🎯 Очередь — *{item}*\n" + "\n".join(formatted_lines)
                 if user_pos:
-                    block += f"\n\nТы находишься на позиции №{user_pos} по предмету {item}"
+                    text_block += f"\n\n📍 Твоя позиция: №{user_pos}"
 
-            blocks.append(block)
+            blocks.append(text_block)
 
-        text = (
-            (f"Запросил: @{username}\n\n" if username else f"Запросил: {callback_query.from_user.full_name}\n\n")
-            + ("\n\n".join(blocks) if blocks else "Нет выбранных предметов.")
-        )
-        await callback_query.message.edit_text(text, parse_mode="Markdown")
-        asyncio.create_task(delete_later(callback_query.message.chat.id, callback_query.message.message_id, 15))
-        await callback_query.answer("Готово")
+        text = "\n\n----------------------\n\n".join(blocks)
+        text = f"Запросил: @{username}\n\n" + text
+
+        msg = await callback_query.message.edit_text(text, parse_mode="Markdown")
+        asyncio.create_task(delete_later(msg.chat.id, msg.message_id, 15))
+        await callback_query.answer("Очередь обновлена")
 
     except Exception as e:
-        await callback_query.message.edit_text("Ошибка: " + str(e))
-
+        await callback_query.message.edit_text(f"⚠️ Ошибка: {e}")
 
 # ========= Аукцион: выйти / удалить / забрал =========
 @dp.message_handler(commands=["выйти","viyti"])
