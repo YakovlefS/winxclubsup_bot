@@ -752,6 +752,44 @@ async def list_items_cmd(message: types.Message):
     text = "Предметы аукциона:\n- " + "\n- ".join(items) if items else "Список предметов пуст."
     reply = await message.answer(text)
     schedule_cleanup(message, reply)
+    
+# ========= Синхронизация Google Sheets и локальной БД =========
+@dp.message_handler(commands=["синхронизировать","sync"])
+async def manual_sync(message: types.Message):
+    if not await only_leader_officers(message):
+        reply = await message.answer("Недостаточно прав для запуска синхронизации.")
+        return schedule_cleanup(message, reply)
+
+    reply = await message.answer("🔄 Синхронизация данных с Google Sheets...")
+
+    try:
+        async with aiosqlite.connect(DB) as conn:
+            # Получаем все строки из Google Sheets
+            matrix, _ = gsheet.get_auction_matrix()
+            players_ws = gsheet.sheet.worksheet("Игроки")
+            players = players_ws.get_all_values()
+
+            if not players or len(players) < 2:
+                await reply.edit_text("⚠️ Вкладка 'Игроки' пуста, синхронизация пропущена.")
+                return
+
+            header = players[0]
+            idx = {h: i for i, h in enumerate(header)}
+
+            count = 0
+            for row in players[1:]:
+                if not row or len(row) < 3:
+                    continue
+                tg_id = int(row[idx.get("tg_id", 0)] or 0) if (idx.get("tg_id") is not None and row[idx.get("tg_id")]) else None
+                nick = row[idx.get("nick", 2)] if len(row) > 2 else ""
+                cls = row[idx.get("class", 4)] if len(row) > 4 else ""
+                bm = int(row[idx.get("current_bm", 5)] or 0) if len(row) > 5 and row[idx.get("current_bm", 5)].isdigit() else 0
+                bm_updated = row[idx.get("bm_updated", 6)] if len(row) > 6 else datetime.datetime.utcnow().isoformat()
+                if not nick:
+                    continue
+                await conn.execute(
+                    "INSERT OR REPLACE INTO players(tg_id,nick,class,bm,bm_updated) VALUES(?,?,?,?,?)",
+                    (tg_id, nick, cls,_
 
 # ========= Startup =========
 async def on_startup(_):
