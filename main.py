@@ -284,16 +284,30 @@ async def cmd_nick(message: types.Message):
     schedule_cleanup(message, reply)
 
 @dp.message_handler(commands=["класс","klass"])
-async def cmd_class(message: types.Message):
-    if not in_scope(message, "info"): return
-    tg_id = message.from_user.id
+async def choose_class(message: types.Message):
     async with aiosqlite.connect(DB) as conn:
-        cur = await conn.execute("SELECT class FROM players WHERE tg_id=?", (tg_id,))
+        cur = await conn.execute("SELECT class FROM players WHERE tg_id=?", (message.from_user.id,))
         row = await cur.fetchone()
-    current = row[0] if row and row[0] else "-"
-    CLASS_STATE[tg_id] = None
-    reply = await message.answer(f"🧙 Текущий класс: {current}\\nВыбери новый класс:", reply_markup=class_keyboard())
-    schedule_cleanup(message, reply, user_delay=0, bot_delay=30)
+        user_class = row[0] if row else None
+
+    buttons = []
+    for cls in CLASS_LIST:
+        if cls == user_class:
+            btn_text = f"✅ {cls}"
+        else:
+            btn_text = cls
+        buttons.append(types.InlineKeyboardButton(text=btn_text, callback_data=f"class_{cls}"))
+
+    # Разбиваем по 3 кнопки в ряд
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    markup.add(*buttons)
+    markup.add(
+        types.InlineKeyboardButton("🔙 Назад", callback_data="class_back"),
+        types.InlineKeyboardButton("✅ Готово", callback_data="class_done")
+    )
+
+    msg = await message.reply("🎓 Выбери свой класс:", reply_markup=markup)
+    asyncio.create_task(delete_later(msg.chat.id, msg.message_id, 30))
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith("class:"))
 async def class_pick(callback_query: types.CallbackQuery):
