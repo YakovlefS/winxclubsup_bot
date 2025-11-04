@@ -453,21 +453,18 @@ async def manual_sync(message: types.Message):
 @dp.message_handler(commands=["help_master"])
 async def help_master(message: types.Message):
     text = (
-        "*Команды бота*
-"
-        "• /класс — выбор класса (с отметкой ✅)
-"
-        "• /профиль [ник] — показать профиль (свой или другого)
-"
-        "• /очередь — выбор предметов и просмотр очередей
-"
-        "• /синхронизировать (или /sync) — ручная синхронизация
-"
-        "• Сообщения игроков удаляются сразу, ответы бота — через 15 сек
-"
+        """*Команды бота*
+
+• /класс — выбор класса (с отметкой ✅)
+• /профиль [ник] — показать профиль (свой или другого)
+• /очередь — выбор предметов и просмотр очередей
+• /синхронизировать (или /sync) — ручная синхронизация
+• Сообщения игроков удаляются сразу, ответы бота — через 15 сек
+"""
     )
     msg = await message.reply(text)
     await schedule_cleanup(message, msg, 20)
+
 
 # ========== WEBHOOK MODE ==========
 WEBHOOK_HOST = os.getenv("WEBHOOK_URL") or (f"https://{os.getenv('RAILWAY_PUBLIC_DOMAIN')}" if os.getenv('RAILWAY_PUBLIC_DOMAIN') else None)
