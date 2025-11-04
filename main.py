@@ -284,16 +284,31 @@ async def cmd_nick(message: types.Message):
     schedule_cleanup(message, reply)
 
 @dp.message_handler(commands=["класс","klass"])
-async def cmd_class(message: types.Message):
-    if not in_scope(message, "info"): return
-    tg_id = message.from_user.id
+async def choose_class(message: types.Message):
     async with aiosqlite.connect(DB) as conn:
-        cur = await conn.execute("SELECT class FROM players WHERE tg_id=?", (tg_id,))
+        cur = await conn.execute("SELECT class FROM players WHERE tg_id=?", (message.from_user.id,))
         row = await cur.fetchone()
-    current = row[0] if row and row[0] else "-"
-    CLASS_STATE[tg_id] = None
-    reply = await message.answer(f"🧙 Текущий класс: {current}\\nВыбери новый класс:", reply_markup=class_keyboard())
-    schedule_cleanup(message, reply, user_delay=0, bot_delay=30)
+        user_class = row[0] if row else None
+
+    buttons = []
+    for cls in CLASS_LIST:
+        if cls == user_class:
+            btn_text = f"✅ {cls}"
+        else:
+            btn_text = cls
+        buttons.append(types.InlineKeyboardButton(text=btn_text, callback_data=f"class_{cls}"))
+
+    # Разбиваем по 3 кнопки в ряд
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    markup.add(*buttons)
+    markup.add(
+        types.InlineKeyboardButton("🔙 Назад", callback_data="class_back"),
+        types.InlineKeyboardButton("✅ Готово", callback_data="class_done")
+    )
+
+    msg = await message.reply("🎓 Выбери свой класс:", reply_markup=markup)
+    asyncio.create_task(delete_later(msg.chat.id, msg.message_id, 30))
+
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith("class:"))
 async def class_pick(callback_query: types.CallbackQuery):
@@ -367,16 +382,48 @@ async def cmd_bm(message: types.Message):
     schedule_cleanup(message, reply)
 
 @dp.message_handler(commands=["профиль","profil"])
-async def cmd_profile(message: types.Message):
-    if not in_scope(message, "info"): return
-    tg_id = message.from_user.id
+async def show_profile(message: types.Message):
+    target_id = message.from_user.id
+    target_nick = None
+
+    # Если указали ник в команде
+    args = message.get_args().strip()
+    if args:
+        target_nick = args
+
+    # Если ответ на сообщение
+    elif message.reply_to_message:
+        target_id = message.reply_to_message.from_user.id
+
     async with aiosqlite.connect(DB) as conn:
-        cur = await conn.execute("SELECT username,nick,old_nicks,class,bm,bm_updated FROM players WHERE tg_id=?", (tg_id,))
+        if target_nick:
+            cur = await conn.execute("SELECT nick, old_nicks, class, bm, bm_updated FROM players WHERE nick LIKE ?", (target_nick,))
+        else:
+            cur = await conn.execute("SELECT nick, old_nicks, class, bm, bm_updated FROM players WHERE tg_id=?", (target_id,))
         row = await cur.fetchone()
+
     if not row:
-        reply = await message.answer("Профиль не найден. Зарегистрируй ник: /ник <имя>"); return schedule_cleanup(message, reply)
-    reply = await message.answer(f"Ник: {row[1]}\\nСтарые ники: {row[2] or '-'}\\nКласс: {row[3] or '-'}\\nБМ: {row[4] or '-'}\\nОбновлено: {row[5] or '-'}")
-    schedule_cleanup(message, reply, bot_delay=25)
+        msg = await message.reply("⚠️ Профиль не найден.")
+        asyncio.create_task(delete_later(msg.chat.id, msg.message_id, 10))
+        return
+
+    nick, old_nicks, cls, bm, updated = row
+    bm_str = f"{bm:,}".replace(",", " ") if bm else "-"
+    old_nicks = old_nicks if old_nicks and old_nicks.strip() else "-"
+    updated = updated if updated and updated.strip() else "-"
+
+    text = (
+        "🧙‍♂️ *Профиль игрока*\n\n"
+        f"🎮 Ник: *{nick}*\n"
+        f"🕰 Старые ники: {old_nicks}\n"
+        f"⚔️ Класс: {cls}\n"
+        f"💪 Боевой рейтинг: *{bm_str}*\n"
+        f"📅 Последнее обновление: {updated}"
+    )
+
+    msg = await message.reply(text, parse_mode="Markdown")
+    asyncio.create_task(delete_later(msg.chat.id, msg.message_id, 15))
+
 
 @dp.message_handler(commands=["топбм","topbm"])
 async def cmd_topbm(message: types.Message):
@@ -567,24 +614,51 @@ async def qsel_ok(callback_query: types.CallbackQuery):
     tg_id = callback_query.from_user.id
     sel = list(QUEUE_STATE.get(tg_id, set()))
     username = callback_query.from_user.username or callback_query.from_user.full_name
-    if not sel: return await callback_query.answer("Сначала выбери предметы")
+    if not sel:
+        return await callback_query.answer("Сначала выбери предметы")
+
     try:
         matrix, _ = gsheet.get_auction_matrix()
         header = matrix[0] if matrix else []
         blocks = []
         for item in sel:
-            if item not in header: continue
+            if item not in header:
+                continue
             ci = header.index(item)
-            col = [r[ci] if len(r)>ci else '' for r in matrix[1:]]
+            col = [r[ci] if len(r) > ci else '' for r in matrix[1:]]
             col = [c for c in col if c]
-            block = "Очередь — {}:\\n{}".format(item, "\\n".join("{}. {}".format(i+1,v) for i,v in enumerate(col))) if col else f"Очередь — {item}: пусто"
-            blocks.append(block)
-        text = (f"Запросил: @{callback_query.from_user.username}\\n\\n" if callback_query.from_user.username else f"Запросил: {username}\\n\\n") + ("\\n\\n".join(blocks) if blocks else "Нет выбранных предметов.")
-        await callback_query.message.edit_text(text)
-        asyncio.create_task(delete_later(callback_query.message.chat.id, callback_query.message.message_id, 15))
-        await callback_query.answer("Готово")
+            user_pos = None
+
+            # красиво нумеруем и выделяем
+            formatted_lines = []
+        for i, name in enumerate(col, start=1):
+            # обычные цифры вместо эмодзи
+            if username and name.lower() == username.lower():
+                formatted_lines.append(f"{i}. **@{name}**")
+                user_pos = i
+            else:
+                formatted_lines.append(f"{i}. @{name}")
+
+
+            if not formatted_lines:
+                text_block = f"🎯 Очередь — *{item}*\n(пока пуста)"
+            else:
+                text_block = f"🎯 Очередь — *{item}*\n" + "\n".join(formatted_lines)
+                if user_pos:
+                    text_block += f"\n\n📍 Твоя позиция: №{user_pos}"
+
+            blocks.append(text_block)
+
+        text = "\n\n----------------------\n\n".join(blocks)
+        text = f"Запросил: @{username}\n\n" + text
+
+        msg = await callback_query.message.edit_text(text, parse_mode="Markdown")
+        asyncio.create_task(delete_later(msg.chat.id, msg.message_id, 15))
+        await callback_query.answer("Очередь обновлена")
+
     except Exception as e:
-        await callback_query.message.edit_text("Ошибка: " + str(e))
+        await callback_query.message.edit_text(f"⚠️ Ошибка: {e}")
+
 
 # ========= Аукцион: выйти / удалить / забрал =========
 @dp.message_handler(commands=["выйти","viyti"])
