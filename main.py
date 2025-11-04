@@ -567,24 +567,49 @@ async def qsel_ok(callback_query: types.CallbackQuery):
     tg_id = callback_query.from_user.id
     sel = list(QUEUE_STATE.get(tg_id, set()))
     username = callback_query.from_user.username or callback_query.from_user.full_name
-    if not sel: return await callback_query.answer("Сначала выбери предметы")
+    if not sel:
+        return await callback_query.answer("Сначала выбери предметы")
+
     try:
         matrix, _ = gsheet.get_auction_matrix()
         header = matrix[0] if matrix else []
         blocks = []
         for item in sel:
-            if item not in header: continue
+            if item not in header:
+                continue
             ci = header.index(item)
-            col = [r[ci] if len(r)>ci else '' for r in matrix[1:]]
+            col = [r[ci] if len(r) > ci else '' for r in matrix[1:]]
             col = [c for c in col if c]
-            block = "Очередь — {}:\\n{}".format(item, "\\n".join("{}. {}".format(i+1,v) for i,v in enumerate(col))) if col else f"Очередь — {item}: пусто"
+            display_lines = []
+            user_pos = None
+
+            for i, v in enumerate(col):
+                if username and v.lower() == username.lower():
+                    display_lines.append(f"{i+1}. **{v}**")
+                    user_pos = i + 1
+                else:
+                    display_lines.append(f"{i+1}. {v}")
+
+            if not col:
+                block = f"Очередь — {item}: пусто"
+            else:
+                block = f"Очередь — {item}:\n" + "\n".join(display_lines)
+                if user_pos:
+                    block += f"\n\nТы находишься на позиции №{user_pos} по предмету {item}"
+
             blocks.append(block)
-        text = (f"Запросил: @{callback_query.from_user.username}\\n\\n" if callback_query.from_user.username else f"Запросил: {username}\\n\\n") + ("\\n\\n".join(blocks) if blocks else "Нет выбранных предметов.")
-        await callback_query.message.edit_text(text)
+
+        text = (
+            (f"Запросил: @{username}\n\n" if username else f"Запросил: {callback_query.from_user.full_name}\n\n")
+            + ("\n\n".join(blocks) if blocks else "Нет выбранных предметов.")
+        )
+        await callback_query.message.edit_text(text, parse_mode="Markdown")
         asyncio.create_task(delete_later(callback_query.message.chat.id, callback_query.message.message_id, 15))
         await callback_query.answer("Готово")
+
     except Exception as e:
         await callback_query.message.edit_text("Ошибка: " + str(e))
+
 
 # ========= Аукцион: выйти / удалить / забрал =========
 @dp.message_handler(commands=["выйти","viyti"])
