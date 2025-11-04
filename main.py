@@ -487,12 +487,10 @@ async def on_shutdown(dp):
         pass
 
 if __name__ == "__main__":
-    executor.start_webhook(
-        dispatcher=dp,
-        webhook_path=WEBHOOK_PATH if WEBHOOK_URL else f"/bot/{BOT_TOKEN}",
-        on_startup=on_startup,
-        on_shutdown=on_shutdown,
-        skip_updates=True,
-        host="0.0.0.0",
-        port=int(os.getenv("PORT", 8080))
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(ensure_db())
+    loop.run_until_complete(auto_sync())
+    print("✅ Бот запущен в режиме polling")
+    executor.start_polling(dp, skip_updates=True)
+
     )
