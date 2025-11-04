@@ -68,7 +68,7 @@ def in_scope(message: types.Message, role: str) -> bool:
 def is_leader(message: types.Message) -> bool:
     if LEADER_ID:
         if LEADER_ID.startswith("@") and (message.from_user.username or ""):
-            if ("@" + message.from_user.username.lower()) == LEADER_ID.lower():
+            if ("@" + (message.from_user.username or "").lower()) == LEADER_ID.lower():
                 return True
         try:
             if int(LEADER_ID) == message.from_user.id:
@@ -92,11 +92,11 @@ async def delete_later(chat_id, msg_id, delay=15):
     except:
         pass
 
-def schedule_cleanup(user_msg: types.Message, bot_msg: types.Message=None, delay=15, keep_admin=False):
+def schedule_cleanup(user_msg: types.Message, bot_msg: types.Message=None, user_delay=0, bot_delay=15, keep_admin=False):
     if not (keep_admin and (is_leader(user_msg) or is_officer(user_msg))):
-        asyncio.create_task(delete_later(user_msg.chat.id, user_msg.message_id, delay))
+        asyncio.create_task(delete_later(user_msg.chat.id, user_msg.message_id, user_delay))
     if bot_msg:
-        asyncio.create_task(delete_later(bot_msg.chat.id, bot_msg.message_id, delay))
+        asyncio.create_task(delete_later(bot_msg.chat.id, bot_msg.message_id, bot_delay))
 
 # ========= Меню команд (только группы) =========
 async def set_commands():
@@ -112,6 +112,9 @@ async def set_commands():
         BotCommand("viyti","Выйти из очереди"),
         BotCommand("udalit","Удалить игрока (офицеры)"),
         BotCommand("zabral","Отметить получение предметов"),
+        BotCommand("dobavit_predmet","Добавить предмет (офицеры)"),
+        BotCommand("udalit_predmet","Удалить предмет (офицеры)"),
+        BotCommand("spisok_predmetov","Список предметов"),
         BotCommand("privyazat_info","Привязать тему персонажей"),
         BotCommand("privyazat_auk","Привязать тему аукциона"),
         BotCommand("privyazat_ots","Привязать тему отсутствий"),
@@ -133,7 +136,7 @@ def class_keyboard():
            InlineKeyboardButton("✅ Готово", callback_data="class_ok"))
     return kb
 
-def auction_keyboard(selected:set, header:list, prefix="auc"):
+def multi_keyboard(selected:set, header:list, prefix:str, ok_text:str):
     kb = InlineKeyboardMarkup(row_width=3)
     for row in chunk(header, 3):
         btns=[]
@@ -141,35 +144,37 @@ def auction_keyboard(selected:set, header:list, prefix="auc"):
             mark = "✅ " if item in selected else ""
             btns.append(InlineKeyboardButton(text=f"{mark}{item}", callback_data=f"{prefix}:{item}"))
         kb.row(*btns)
-    ok_text = "✅ Подтвердить" if prefix=="auc" else "✅ Готово"
     kb.row(InlineKeyboardButton("↩️ Назад", callback_data=f"{prefix}_back"),
            InlineKeyboardButton(ok_text, callback_data=f"{prefix}_ok"))
     return kb
 
 # ========= Состояния =========
-CLASS_STATE = {}     # user_id -> selected_class
-AUC_STATE = {}       # user_id -> set(items)  for /аук
-ZABRAL_STATE = {}    # user_id -> set(items)  for /забрал
+CLASS_STATE = {}
+AUC_STATE = {}
+ZABRAL_STATE = {}
+QUEUE_STATE = {}
 
 # ========= Help =========
 @dp.message_handler(commands=["start","help_master"])
 async def help_master(message: types.Message):
     text = (
-        "Команды:\n"
-        "• /ник <имя> — регистрация/смена ника\n"
-        "• /класс — выбор класса (кнопки)\n"
-        "• /бм <число> — обновить БМ (с историей)\n"
-        "• /профиль — показать профиль\n"
-        "• /топбм — топ-5 прироста БМ за 7 дней\n"
-        "• /нет <дд.мм> <причина> — отметить отсутствие\n"
-        "• /отсутствие [дд.мм причина] — быстрый учёт отсутствия\n"
-        "• /аук — выбор предметов аукциона (множественный + подтверждение)\n"
-        "• /очередь <предмет> — показать очередь по предмету\n"
-        "• /выйти [предмет] — выйти из очереди (одной или всех)\n"
-        "• /удалить <предмет> <ник> — удалить из очереди (офицеры/лидер)\n"
-        "• /забрал — отметить получение предметов и уйти в конец очереди\n"
-        "\n"
-        "Привязки: /привязать_инфо, /привязать_аук, /привязать_отсутствие, /отвязать_все\n"
+        "Команды:\\n"
+        "• /ник <имя> — регистрация/смена ника\\n"
+        "• /класс — выбор класса (кнопки)\\n"
+        "• /бм <число> — обновить БМ (с историей)\\n"
+        "• /профиль — показать профиль\\n"
+        "• /топбм — топ-5 прироста БМ за 7 дней\\n"
+        "• /нет <дд.мм> <причина> — отметить отсутствие\\n"
+        "• /отсутствие [дд.мм причина] — быстрый учёт отсутствия\\n"
+        "• /аук — выбор предметов аукциона (множественный + подтверждение)\\n"
+        "• /очередь [предмет] — выбрать один/несколько предметов и показать очередь\\n"
+        "• /выйти [предмет] — выйти из очереди (одной или всех)\\n"
+        "• /удалить <предмет> <ник> — удалить из очереди (офицеры/лидер)\\n"
+        "• /забрал — отметить получение предметов и уйти в конец очереди\\n"
+        "• /добавить_предмет <название> — добавить столбец (офицеры/лидер)\\n"
+        "• /удалить_предмет <название> — удалить столбец (офицеры/лидер)\\n"
+        "• /список_предметов — показать текущие предметы\\n"
+        "• Привязки: /привязать_инфо, /привязать_аук, /привязать_отсутствие, /отвязать_все\\n"
     )
     reply = await message.answer(text)
     schedule_cleanup(message, reply)
@@ -188,7 +193,7 @@ async def bind_info(message: types.Message):
         await set_setting(conn, "scope_chat_id", str(message.chat.id))
         await set_setting(conn, "scope_topic_info", str(mtid))
     await load_scope()
-    reply = await message.answer(f"✅ Привязано: тема ИНФО.\nchat_id=`{message.chat.id}`\ninfo_topic_id=`{mtid}`", parse_mode="Markdown")
+    reply = await message.answer(f"✅ Привязано: тема ИНФО.\\nchat_id=`{message.chat.id}`\\ninfo_topic_id=`{mtid}`", parse_mode="Markdown")
     schedule_cleanup(message, reply)
 
 @dp.message_handler(commands=["привязать_аук"])
@@ -204,7 +209,7 @@ async def bind_auction(message: types.Message):
         await set_setting(conn, "scope_chat_id", str(message.chat.id))
         await set_setting(conn, "scope_topic_auction", str(mtid))
     await load_scope()
-    reply = await message.answer(f"✅ Привязано: тема АУК.\nchat_id=`{message.chat.id}`\nauction_topic_id=`{mtid}`", parse_mode="Markdown")
+    reply = await message.answer(f"✅ Привязано: тема АУК.\\nchat_id=`{message.chat.id}`\\nauction_topic_id=`{mtid}`", parse_mode="Markdown")
     schedule_cleanup(message, reply)
 
 @dp.message_handler(commands=["привязать_отсутствие"])
@@ -220,7 +225,7 @@ async def bind_abs(message: types.Message):
         await set_setting(conn, "scope_chat_id", str(message.chat.id))
         await set_setting(conn, "scope_topic_absence", str(mtid))
     await load_scope()
-    reply = await message.answer(f"✅ Привязано: тема ОТС.\nchat_id=`{message.chat.id}`\nabsence_topic_id=`{mtid}`", parse_mode="Markdown")
+    reply = await message.answer(f"✅ Привязано: тема ОТС.\\nchat_id=`{message.chat.id}`\\nabsence_topic_id=`{mtid}`", parse_mode="Markdown")
     schedule_cleanup(message, reply)
 
 @dp.message_handler(commands=["отвязать_все"])
@@ -249,7 +254,7 @@ async def cmd_nick(message: types.Message):
         row = await cur.fetchone()
     if len(parts) < 2:
         if row and row[0]:
-            reply = await message.answer(f"Текущий ник: {row[0]}\nИзмени так: /ник <новый_ник>")
+            reply = await message.answer(f"Текущий ник: {row[0]}\\nИзмени так: /ник <новый_ник>")
             return schedule_cleanup(message, reply)
         else:
             reply = await message.answer("Использование: /ник <имя>")
@@ -287,8 +292,8 @@ async def cmd_class(message: types.Message):
         row = await cur.fetchone()
     current = row[0] if row and row[0] else "-"
     CLASS_STATE[tg_id] = None
-    reply = await message.answer(f"🧙 Текущий класс: {current}\nВыбери новый класс:", reply_markup=class_keyboard())
-    schedule_cleanup(message, reply, delay=30)
+    reply = await message.answer(f"🧙 Текущий класс: {current}\\nВыбери новый класс:", reply_markup=class_keyboard())
+    schedule_cleanup(message, reply, user_delay=0, bot_delay=30)
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith("class:"))
 async def class_pick(callback_query: types.CallbackQuery):
@@ -370,8 +375,8 @@ async def cmd_profile(message: types.Message):
         row = await cur.fetchone()
     if not row:
         reply = await message.answer("Профиль не найден. Зарегистрируй ник: /ник <имя>"); return schedule_cleanup(message, reply)
-    reply = await message.answer(f"Ник: {row[1]}\nСтарые ники: {row[2] or '-'}\nКласс: {row[3] or '-'}\nБМ: {row[4] or '-'}\nОбновлено: {row[5] or '-'}")
-    schedule_cleanup(message, reply, delay=25)
+    reply = await message.answer(f"Ник: {row[1]}\\nСтарые ники: {row[2] or '-'}\\nКласс: {row[3] or '-'}\\nБМ: {row[4] or '-'}\\nОбновлено: {row[5] or '-'}")
+    schedule_cleanup(message, reply, bot_delay=25)
 
 @dp.message_handler(commands=["топбм","topbm"])
 async def cmd_topbm(message: types.Message):
@@ -382,8 +387,8 @@ async def cmd_topbm(message: types.Message):
         rows = await cur.fetchall()
     if not rows:
         reply = await message.answer("Данных за 7 дней нет."); return schedule_cleanup(message, reply)
-    reply = await message.answer("Топ прироста БМ за 7 дней:\n" + "\n".join([f"{i+1}. {r[0]} (+{r[1]})" for i,r in enumerate(rows)]))
-    schedule_cleanup(message, reply, delay=25)
+    reply = await message.answer("Топ прироста БМ за 7 дней:\\n" + "\\n".join([f"{i+1}. {r[0]} (+{r[1]})" for i,r in enumerate(rows)]))
+    schedule_cleanup(message, reply, bot_delay=25)
 
 # ========= Отсутствие =========
 @dp.message_handler(commands=["нет","отсутствие","net"])
@@ -411,53 +416,64 @@ async def cmd_absence(message: types.Message):
             await bot.send_message(SCOPE_CHAT_ID, f"🛌 {nick}: отсутствует {date}. Причина: {reason}", message_thread_id=SCOPE_TOPIC_ABS)
         except: pass
     reply = await message.answer(text)
-    schedule_cleanup(message, reply, delay=15)
+    schedule_cleanup(message, reply, user_delay=0, bot_delay=15)
 
-# ========= Аукцион =========
+# ========= Вспомогательное =========
+def get_items_safe():
+    try:
+        matrix, _ = gsheet.get_auction_matrix()
+        header = matrix[0] if matrix else []
+        return header
+    except:
+        return []
+
+def multi_keyboard(header_set, selected_set, prefix, ok_text):
+    kb = InlineKeyboardMarkup(row_width=3)
+    rows = [header_set[i:i+3] for i in range(0, len(header_set), 3)]
+    for row in rows:
+        buttons = []
+        for item in row:
+            mark = "✅ " if item in selected_set else ""
+            buttons.append(InlineKeyboardButton(text=f"{mark}{item}", callback_data=f"{prefix}:{item}"))
+        kb.row(*buttons)
+    kb.row(InlineKeyboardButton("↩️ Назад", callback_data=f"{prefix}_back"),
+           InlineKeyboardButton(ok_text, callback_data=f"{prefix}_ok"))
+    return kb
+
+# ========= Аукцион: запись =========
+AUC_STATE = {}
 @dp.message_handler(commands=["аук","auk"])
 async def cmd_auction(message: types.Message):
     if not in_scope(message, "auction"): return
     if not (gsheet and gsheet.sheet):
         reply = await message.answer("Google Sheets недоступен. Проверь GOOGLE_CREDENTIALS и GSHEET_ID."); return schedule_cleanup(message, reply)
-    try:
-        matrix, _ = gsheet.get_auction_matrix()
-        header = matrix[0] if matrix else []
-        if not header:
-            reply = await message.answer("Лист 'Аукцион' пуст или без шапки."); return schedule_cleanup(message, reply)
-    except Exception as e:
-        reply = await message.answer("Ошибка Google Sheets: " + str(e)); return schedule_cleanup(message, reply)
+    header = get_items_safe()
+    if not header:
+        reply = await message.answer("Лист 'Аукцион' пуст или без шапки."); return schedule_cleanup(message, reply)
     tg_id = message.from_user.id
     AUC_STATE[tg_id] = set()
-    reply = await message.answer("🎯 Выбери предметы аукциона (можно несколько):", reply_markup=auction_keyboard(AUC_STATE[tg_id], header, prefix="auc"))
-    schedule_cleanup(message, reply, delay=60)
+    reply = await message.answer("🎯 Выбери предметы аукциона (можно несколько):", reply_markup=multi_keyboard(header, AUC_STATE[tg_id], "auc", "✅ Подтвердить"))
+    schedule_cleanup(message, reply, user_delay=0, bot_delay=60)
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith("auc:"))
 async def auc_toggle(callback_query: types.CallbackQuery):
     tg_id = callback_query.from_user.id
     item = callback_query.data.split(":",1)[1]
-    try:
-        matrix, _ = gsheet.get_auction_matrix()
-        header = matrix[0] if matrix else []
-    except:
-        header = []
+    header = get_items_safe()
     if item not in header:
         return await callback_query.answer("Этот предмет сейчас недоступен")
     sel = AUC_STATE.setdefault(tg_id, set())
     if item in sel: sel.remove(item); note=f"Снято: {item}"
     else: sel.add(item); note=f"Выбрано: {item}"
-    await callback_query.message.edit_reply_markup(reply_markup=auction_keyboard(sel, header, prefix="auc"))
+    await callback_query.message.edit_reply_markup(reply_markup=multi_keyboard(header, sel, "auc", "✅ Подтвердить"))
     await callback_query.answer(note)
 
 @dp.callback_query_handler(lambda c: c.data == "auc_back")
 async def auc_back(callback_query: types.CallbackQuery):
     tg_id = callback_query.from_user.id
     AUC_STATE[tg_id] = set()
-    try:
-        matrix, _ = gsheet.get_auction_matrix()
-        header = matrix[0] if matrix else []
-    except:
-        header = []
-    await callback_query.message.edit_reply_markup(reply_markup=auction_keyboard(AUC_STATE[tg_id], header, prefix="auc"))
+    header = get_items_safe()
+    await callback_query.message.edit_reply_markup(reply_markup=multi_keyboard(header, AUC_STATE[tg_id], "auc", "✅ Подтвердить"))
     await callback_query.answer("Выбор сброшен")
 
 @dp.callback_query_handler(lambda c: c.data == "auc_ok")
@@ -494,33 +510,83 @@ async def auc_ok(callback_query: types.CallbackQuery):
     except Exception as e:
         return await callback_query.message.edit_text("Ошибка Google Sheets: " + str(e))
     AUC_STATE[tg_id] = set()
-    await callback_query.message.edit_text("\n".join(msgs))
+    await callback_query.message.edit_text("\\n".join(msgs))
     asyncio.create_task(delete_later(callback_query.message.chat.id, callback_query.message.message_id, 15))
     await callback_query.answer("Сохранено")
 
+# ========= Очередь: просмотр (один или несколько) =========
+QUEUE_STATE = {}
 @dp.message_handler(commands=["очередь","ochered"])
 async def cmd_queue(message: types.Message):
     if not in_scope(message, "auction"): return
     parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-        reply = await message.answer("Использование: /очередь <предмет>"); return schedule_cleanup(message, reply, 20)
-    item = parts[1].strip()
-    if gsheet and gsheet.sheet:
+    header = get_items_safe()
+    if len(parts) >= 2:
+        item = parts[1].strip()
+        if item not in header:
+            reply = await message.answer("Предмет не найден."); return schedule_cleanup(message, reply)
         try:
             matrix, _ = gsheet.get_auction_matrix()
-            header = matrix[0] if matrix else []
-            if item not in header: reply = await message.answer("Очередь пуста или предмет не найден."); return schedule_cleanup(message, reply, 20)
             ci = header.index(item)
             col = [r[ci] if len(r)>ci else '' for r in matrix[1:]]
             col = [c for c in col if c]
-            if not col: reply = await message.answer("Очередь пуста."); return schedule_cleanup(message, reply, 20)
-            reply = await message.answer("Очередь — {}:\n{}".format(item, "\n".join("{}. {}".format(i+1,v) for i,v in enumerate(col))))
-            return schedule_cleanup(message, reply, 25)
+            text = "Очередь — {}:\\n{}".format(item, "\\n".join("{}. {}".format(i+1,v) for i,v in enumerate(col))) if col else f"Очередь — {item}: пусто"
+            reply = await message.answer(text)
+            return schedule_cleanup(message, reply, user_delay=0, bot_delay=15)
         except Exception as e:
-            reply = await message.answer("Ошибка: " + str(e)); return schedule_cleanup(message, reply, 20)
-    else:
-        reply = await message.answer("Google Sheets недоступен. Проверь настройки."); return schedule_cleanup(message, reply, 20)
+            reply = await message.answer("Ошибка: " + str(e)); return schedule_cleanup(message, reply)
+    tg_id = message.from_user.id
+    QUEUE_STATE[tg_id] = set()
+    reply = await message.answer("📜 Выберите предметы для просмотра очередей (можно несколько):",
+                                 reply_markup=multi_keyboard(header, QUEUE_STATE[tg_id], "qsel", "✅ Показать очереди"))
+    schedule_cleanup(message, reply, user_delay=0, bot_delay=60)
 
+@dp.callback_query_handler(lambda c: c.data and c.data.startswith("qsel:"))
+async def qsel_toggle(callback_query: types.CallbackQuery):
+    tg_id = callback_query.from_user.id
+    item = callback_query.data.split(":",1)[1]
+    header = get_items_safe()
+    if item not in header:
+        return await callback_query.answer("Предмет недоступен")
+    sel = QUEUE_STATE.setdefault(tg_id, set())
+    if item in sel: sel.remove(item); note=f"Снято: {item}"
+    else: sel.add(item); note=f"Выбрано: {item}"
+    await callback_query.message.edit_reply_markup(reply_markup=multi_keyboard(header, sel, "qsel", "✅ Показать очереди"))
+    await callback_query.answer(note)
+
+@dp.callback_query_handler(lambda c: c.data == "qsel_back")
+async def qsel_back(callback_query: types.CallbackQuery):
+    tg_id = callback_query.from_user.id
+    QUEUE_STATE[tg_id] = set()
+    header = get_items_safe()
+    await callback_query.message.edit_reply_markup(reply_markup=multi_keyboard(header, QUEUE_STATE[tg_id], "qsel", "✅ Показать очереди"))
+    await callback_query.answer("Выбор сброшен")
+
+@dp.callback_query_handler(lambda c: c.data == "qsel_ok")
+async def qsel_ok(callback_query: types.CallbackQuery):
+    tg_id = callback_query.from_user.id
+    sel = list(QUEUE_STATE.get(tg_id, set()))
+    username = callback_query.from_user.username or callback_query.from_user.full_name
+    if not sel: return await callback_query.answer("Сначала выбери предметы")
+    try:
+        matrix, _ = gsheet.get_auction_matrix()
+        header = matrix[0] if matrix else []
+        blocks = []
+        for item in sel:
+            if item not in header: continue
+            ci = header.index(item)
+            col = [r[ci] if len(r)>ci else '' for r in matrix[1:]]
+            col = [c for c in col if c]
+            block = "Очередь — {}:\\n{}".format(item, "\\n".join("{}. {}".format(i+1,v) for i,v in enumerate(col))) if col else f"Очередь — {item}: пусто"
+            blocks.append(block)
+        text = (f"Запросил: @{callback_query.from_user.username}\\n\\n" if callback_query.from_user.username else f"Запросил: {username}\\n\\n") + ("\\n\\n".join(blocks) if blocks else "Нет выбранных предметов.")
+        await callback_query.message.edit_text(text)
+        asyncio.create_task(delete_later(callback_query.message.chat.id, callback_query.message.message_id, 15))
+        await callback_query.answer("Готово")
+    except Exception as e:
+        await callback_query.message.edit_text("Ошибка: " + str(e))
+
+# ========= Аукцион: выйти / удалить / забрал =========
 @dp.message_handler(commands=["выйти","viyti"])
 async def cmd_leave(message: types.Message):
     if not in_scope(message, "auction"): return
@@ -584,45 +650,34 @@ async def cmd_zabral(message: types.Message):
     if not in_scope(message, "auction"): return
     if not (gsheet and gsheet.sheet):
         reply = await message.answer("Google Sheets недоступен."); return schedule_cleanup(message, reply)
-    try:
-        matrix, _ = gsheet.get_auction_matrix()
-        header = matrix[0] if matrix else []
-        if not header:
-            reply = await message.answer("Лист 'Аукцион' пуст."); return schedule_cleanup(message, reply)
-    except Exception as e:
-        reply = await message.answer("Ошибка Google Sheets: " + str(e)); return schedule_cleanup(message, reply)
+    header = get_items_safe()
+    if not header:
+        reply = await message.answer("Лист 'Аукцион' пуст."); return schedule_cleanup(message, reply)
     tg_id = message.from_user.id
+    global ZABRAL_STATE
     ZABRAL_STATE[tg_id] = set()
-    reply = await message.answer("🎁 Отметь полученные предметы (можно несколько):", reply_markup=auction_keyboard(ZABRAL_STATE[tg_id], header, prefix="zabral"))
-    schedule_cleanup(message, reply, delay=60)
+    reply = await message.answer("🎁 Отметь полученные предметы (можно несколько):", reply_markup=multi_keyboard(header, ZABRAL_STATE[tg_id], "zabral", "✅ Готово"))
+    schedule_cleanup(message, reply, user_delay=0, bot_delay=60)
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith("zabral:"))
 async def zabral_toggle(callback_query: types.CallbackQuery):
     tg_id = callback_query.from_user.id
     item = callback_query.data.split(":",1)[1]
-    try:
-        matrix, _ = gsheet.get_auction_matrix()
-        header = matrix[0] if matrix else []
-    except:
-        header = []
+    header = get_items_safe()
     if item not in header:
         return await callback_query.answer("Этот предмет сейчас недоступен")
     sel = ZABRAL_STATE.setdefault(tg_id, set())
     if item in sel: sel.remove(item); note=f"Снято: {item}"
     else: sel.add(item); note=f"Выбрано: {item}"
-    await callback_query.message.edit_reply_markup(reply_markup=auction_keyboard(sel, header, prefix="zabral"))
+    await callback_query.message.edit_reply_markup(reply_markup=multi_keyboard(header, sel, "zabral", "✅ Готово"))
     await callback_query.answer(note)
 
 @dp.callback_query_handler(lambda c: c.data == "zabral_back")
 async def zabral_back(callback_query: types.CallbackQuery):
     tg_id = callback_query.from_user.id
     ZABRAL_STATE[tg_id] = set()
-    try:
-        matrix, _ = gsheet.get_auction_matrix()
-        header = matrix[0] if matrix else []
-    except:
-        header = []
-    await callback_query.message.edit_reply_markup(reply_markup=auction_keyboard(ZABRAL_STATE[tg_id], header, prefix="zabral"))
+    header = get_items_safe()
+    await callback_query.message.edit_reply_markup(reply_markup=multi_keyboard(header, ZABRAL_STATE[tg_id], "zabral", "✅ Готово"))
     await callback_query.answer("Выбор сброшен")
 
 @dp.callback_query_handler(lambda c: c.data == "zabral_ok")
@@ -658,9 +713,58 @@ async def zabral_ok(callback_query: types.CallbackQuery):
     except Exception as e:
         return await callback_query.message.edit_text("Ошибка Google Sheets: " + str(e))
     ZABRAL_STATE[tg_id] = set()
-    await callback_query.message.edit_text("\n".join(msgs))
+    await callback_query.message.edit_text("\\n".join(msgs))
     asyncio.create_task(delete_later(callback_query.message.chat.id, callback_query.message.message_id, 15))
     await callback_query.answer("Сохранено")
+
+# ========= Управление предметами (офицеры/лидер) =========
+@dp.message_handler(commands=["добавить_предмет","dobavit_predmet"])
+async def add_item_cmd(message: types.Message):
+    if not in_scope(message, "auction"): return
+    if not await only_leader_officers(message):
+        reply = await message.answer("Недостаточно прав."); return schedule_cleanup(message, reply)
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        reply = await message.answer("Использование: /добавить_предмет <название>"); return schedule_cleanup(message, reply)
+    name = parts[1].strip()
+    try:
+        created = gsheet.add_item(name)
+        if created:
+            reply = await message.answer(f"🆕 Предмет «{name}» добавлен в аукцион!")
+            gsheet.write_log(datetime.datetime.utcnow().isoformat(), message.from_user.id, message.from_user.username or "", "item_add", name)
+        else:
+            reply = await message.answer("Такой предмет уже существует.")
+    except Exception as e:
+        reply = await message.answer("Ошибка Google Sheets: " + str(e))
+    schedule_cleanup(message, reply)
+
+@dp.message_handler(commands=["удалить_предмет","udalit_predmet"])
+async def del_item_cmd(message: types.Message):
+    if not in_scope(message, "auction"): return
+    if not await only_leader_officers(message):
+        reply = await message.answer("Недостаточно прав."); return schedule_cleanup(message, reply)
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        reply = await message.answer("Использование: /удалить_предмет <название>"); return schedule_cleanup(message, reply)
+    name = parts[1].strip()
+    try:
+        ok = gsheet.remove_item(name)
+        if ok:
+            reply = await message.answer(f"🗑 Предмет «{name}» удалён из аукциона!")
+            gsheet.write_log(datetime.datetime.utcnow().isoformat(), message.from_user.id, message.from_user.username or "", "item_del", name)
+        else:
+            reply = await message.answer("Предмет не найден.")
+    except Exception as e:
+        reply = await message.answer("Ошибка Google Sheets: " + str(e))
+    schedule_cleanup(message, reply)
+
+@dp.message_handler(commands=["список_предметов","spisok_predmetov"])
+async def list_items_cmd(message: types.Message):
+    if not in_scope(message, "auction"): return
+    items = gsheet.list_items() if (gsheet and gsheet.sheet) else []
+    text = "Предметы аукциона:\\n- " + "\\n- ".join(items) if items else "Список предметов пуст."
+    reply = await message.answer(text)
+    schedule_cleanup(message, reply)
 
 # ========= Startup =========
 async def on_startup(_):
