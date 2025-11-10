@@ -316,64 +316,55 @@ async def help_master(message: types.Message):
 # ========= Привязки =========
 
 
-@dp.message_handler(commands=["привязать_инфо", "privyazat_info"])
+@dp.message_handler(commands=["привязать_инфо"])
 async def bind_info(message: types.Message):
-    if message.chat.type not in ("group", "supergroup"):
-        return await message.answer("Только в группе.")
     if not await only_leader_officers(message):
-        return await message.answer("Недостаточно прав.")
-    mtid = getattr(message, "message_thread_id", None)
-    if mtid is None:
-        return await message.answer("Вызови команду внутри темы.")
+        return await message.answer("🚫 Недостаточно прав для выполнения этой команды.")
+    mtid = message.message_thread_id
     async with aiosqlite.connect(DB) as conn:
         await set_setting(conn, "scope_chat_id", str(message.chat.id))
         await set_setting(conn, "scope_topic_info", str(mtid))
-    await load_scope()
     reply = await message.answer(
-        f"✅ Привязано: тема ИНФО.\nchat_id=`{message.chat.id}`\ninfo_topic_id=`{mtid}`",
-        parse_mode="Markdown",
+        f"✅ Привязано: тема <b>ИНФО</b>.<br>"
+        f"<b>chat_id:</b> <code>{message.chat.id}</code><br>"
+        f"<b>info_topic_id:</b> <code>{mtid}</code>",
+        parse_mode="HTML",
     )
-    schedule_cleanup(message, reply)
+    await delete_later(reply, 10)
 
 
-@dp.message_handler(commands=["привязать_аук", "privyazat_auk"])
+@dp.message_handler(commands=["привязать_аук"])
 async def bind_auction(message: types.Message):
-    if message.chat.type not in ("group", "supergroup"):
-        return await message.answer("Только в группе.")
     if not await only_leader_officers(message):
-        return await message.answer("Недостаточно прав.")
-    mtid = getattr(message, "message_thread_id", None)
-    if mtid is None:
-        return await message.answer("Вызови команду внутри темы.")
+        return await message.answer("🚫 Недостаточно прав для выполнения этой команды.")
+    mtid = message.message_thread_id
     async with aiosqlite.connect(DB) as conn:
         await set_setting(conn, "scope_chat_id", str(message.chat.id))
         await set_setting(conn, "scope_topic_auction", str(mtid))
-    await load_scope()
     reply = await message.answer(
-        f"✅ Привязано: тема АУК.\nchat_id=`{message.chat.id}`\nauction_topic_id=`{mtid}`",
-        parse_mode="Markdown",
+        f"✅ Привязано: тема <b>АУК</b>.<br>"
+        f"<b>chat_id:</b> <code>{message.chat.id}</code><br>"
+        f"<b>auction_topic_id:</b> <code>{mtid}</code>",
+        parse_mode="HTML",
     )
-    schedule_cleanup(message, reply)
+    await delete_later(reply, 10)
 
 
-@dp.message_handler(commands=["привязать_отсутствие", "privyazat_ots"])
+@dp.message_handler(commands=["привязать_отсутствие"])
 async def bind_abs(message: types.Message):
-    if message.chat.type not in ("group", "supergroup"):
-        return await message.answer("Только в группе.")
     if not await only_leader_officers(message):
-        return await message.answer("Недостаточно прав.")
-    mtid = getattr(message, "message_thread_id", None)
-    if mtid is None:
-        return await message.answer("Вызови команду внутри темы.")
+        return await message.answer("🚫 Недостаточно прав для выполнения этой команды.")
+    mtid = message.message_thread_id
     async with aiosqlite.connect(DB) as conn:
         await set_setting(conn, "scope_chat_id", str(message.chat.id))
         await set_setting(conn, "scope_topic_absence", str(mtid))
-    await load_scope()
     reply = await message.answer(
-        f"✅ Привязано: тема ОТС.\nchat_id=`{message.chat.id}`\nabsence_topic_id=`{mtid}`",
-        parse_mode="Markdown",
+        f"✅ Привязано: тема <b>ОТСУТСТВИЯ</b>.<br>"
+        f"<b>chat_id:</b> <code>{message.chat.id}</code><br>"
+        f"<b>absence_topic_id:</b> <code>{mtid}</code>",
+        parse_mode="HTML",
     )
-    schedule_cleanup(message, reply)
+    await delete_later(reply, 10)
 
 
 @dp.message_handler(commands=["отвязать_все", "otvyazat_vse"])
