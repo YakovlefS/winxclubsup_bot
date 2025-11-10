@@ -31,8 +31,17 @@ OFFICERS = [
 ] or ["@Maffins89", "@Gi_Di_Al", "@oOMEMCH1KOo", "@Ferbi55", "@Ahaha_Ohoho"]
 
 CLASS_LIST = [
-    "Вульпин", "Варвар", "Лучник", "Жрец", "Воин", "Маг",
-    "Убийца", "Окультист", "Дух меча", "Отшельник", "Мечник"
+    "Вульпин",
+    "Варвар",
+    "Лучник",
+    "Жрец",
+    "Воин",
+    "Маг",
+    "Убийца",
+    "Окультист",
+    "Дух меча",
+    "Отшельник",
+    "Мечник",
 ]
 
 if not BOT_TOKEN:
@@ -51,7 +60,6 @@ if GSHEET_ID:
     except Exception as e:
         logging.error(f"GSheet init error: {e}")
 
-# ========= CONSTANTS =========
 SHEET_PLAYERS = "Игроки"
 SHEET_AUCTION = "Аукцион"
 
@@ -63,13 +71,32 @@ SCOPE_TOPIC_ABS = None
 
 # ========= HELPERS =========
 
+
 def norm_username(u: str) -> str:
-    return ("@" + u) if u and not u.startswith("@") else (u or "")
+    if not u:
+        return ""
+    return "@" + u if not u.startswith("@") else u
+
+
+async def ensure_settings_table():
+    """Создаёт таблицу settings, если её нет."""
+    async with aiosqlite.connect(DB) as conn:
+        await conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            )
+            """
+        )
+        await conn.commit()
+
 
 async def get_setting(conn, key):
     cur = await conn.execute("SELECT value FROM settings WHERE key=?", (key,))
     row = await cur.fetchone()
     return row[0] if row else None
+
 
 async def set_setting(conn, key, value):
     await conn.execute(
@@ -78,6 +105,7 @@ async def set_setting(conn, key, value):
     )
     await conn.commit()
 
+
 async def load_scope():
     global SCOPE_CHAT_ID, SCOPE_TOPIC_INFO, SCOPE_TOPIC_AUCTION, SCOPE_TOPIC_ABS
     async with aiosqlite.connect(DB) as conn:
@@ -85,10 +113,12 @@ async def load_scope():
         info = await get_setting(conn, "scope_topic_info")
         auction = await get_setting(conn, "scope_topic_auction")
         abs_t = await get_setting(conn, "scope_topic_absence")
+
     SCOPE_CHAT_ID = int(chat) if chat not in (None, "") else None
     SCOPE_TOPIC_INFO = int(info) if info not in (None, "") else None
     SCOPE_TOPIC_AUCTION = int(auction) if auction not in (None, "") else None
     SCOPE_TOPIC_ABS = int(abs_t) if abs_t not in (None, "") else None
+
 
 def in_scope(message: types.Message, role: str) -> bool:
     if SCOPE_CHAT_ID is not None and message.chat.id != SCOPE_CHAT_ID:
@@ -102,14 +132,15 @@ def in_scope(message: types.Message, role: str) -> bool:
         return False
     return True
 
+
 def is_leader(message: types.Message) -> bool:
     if not LEADER_ID:
         return False
-    # LEADER_ID = '@username'
     if str(LEADER_ID).startswith("@") and (message.from_user.username or ""):
-        if norm_username(message.from_user.username).lower() == str(LEADER_ID).lower():
+        if norm_username(message.from_user.username).lower() == str(
+            LEADER_ID
+        ).lower():
             return True
-    # LEADER_ID = numeric id
     try:
         if int(str(LEADER_ID)) == message.from_user.id:
             return True
@@ -117,12 +148,18 @@ def is_leader(message: types.Message) -> bool:
         pass
     return False
 
+
 def is_officer(message: types.Message) -> bool:
     uname = message.from_user.username or ""
-    return norm_username(uname) in [s.lower() for s in map(str.lower, OFFICERS)] if uname else False
+    if not uname:
+        return False
+    nu = norm_username(uname)
+    return any(nu.lower() == o.lower() for o in OFFICERS)
+
 
 async def only_leader_officers(message: types.Message) -> bool:
     return is_leader(message) or is_officer(message)
+
 
 async def send_to_leader(text: str):
     if not LEADER_ID:
@@ -136,14 +173,17 @@ async def send_to_leader(text: str):
     except Exception as e:
         logging.warning(f"send_to_leader failed: {e}")
 
+
 # ========= Автоудаление =========
+
 
 async def delete_later(chat_id, msg_id, delay=15):
     await asyncio.sleep(delay)
     try:
         await bot.delete_message(chat_id, msg_id)
-    except:
-        pass
+    except Exception as e:
+        logging.debug(f"delete_later failed: {e}")
+
 
 def schedule_cleanup(
     user_msg: types.Message,
@@ -152,17 +192,25 @@ def schedule_cleanup(
     bot_delay: int = 15,
     keep_admin: bool = False,
 ):
+    # Удаляем сообщение пользователя, если это не лидер/офицер (если не keep_admin)
     if not (keep_admin and (is_leader(user_msg) or is_officer(user_msg))):
-        asyncio.create_task(delete_later(user_msg.chat.id, user_msg.message_id, user_delay))
+        asyncio.create_task(
+            delete_later(user_msg.chat.id, user_msg.message_id, user_delay)
+        )
+    # Удаляем ответ бота
     if bot_msg:
-        asyncio.create_task(delete_later(bot_msg.chat.id, bot_msg.message_id, bot_delay))
+        asyncio.create_task(
+            delete_later(bot_msg.chat.id, bot_msg.message_id, bot_delay)
+        )
 
-# ========= Меню команд =========
+
+# ========= Команды =========
+
 
 async def set_commands():
     cmds = [
         BotCommand("nik", "Регистрация/смена ника"),
-        BotCommand("klass", "Выбор класса (кнопки)"),
+        BotCommand("klass", "Выбор класса"),
         BotCommand("bm", "Обновить БМ"),
         BotCommand("profil", "Показать профиль"),
         BotCommand("topbm", "Топ прироста БМ"),
@@ -171,20 +219,27 @@ async def set_commands():
         BotCommand("ochered", "Показать очередь"),
         BotCommand("viyti", "Выйти из очереди"),
         BotCommand("zabral", "Отметить получение предметов"),
-        BotCommand("dobavit_predmet", "Добавить предмет (офицеры)"),
-        BotCommand("udalit_predmet", "Удалить предмет (офицеры)"),
+        BotCommand("dobavit_predmet", "Добавить предмет"),
+        BotCommand("udalit_predmet", "Удалить предмет"),
         BotCommand("spisok_predmetov", "Список предметов"),
+        BotCommand("privyazat_info", "Привязать тему инфо"),
+        BotCommand("privyazat_auk", "Привязать тему аукциона"),
+        BotCommand("privyazat_ots", "Привязать тему отсутствий"),
+        BotCommand("otvyazat_vse", "Сбросить привязки"),
         BotCommand("help_master", "Список команд"),
         BotCommand("moya_ochered", "Мои места в очередях"),
-        BotCommand("sync", "Синхронизация с таблицей (офицеры)"),
+        BotCommand("sync", "Синхронизация игроков"),
     ]
     await bot.set_my_commands(cmds, scope=BotCommandScopeAllGroupChats())
 
+
 # ========= Клавиатуры =========
+
 
 def chunk(lst, n):
     for i in range(0, len(lst), n):
         yield lst[i : i + n]
+
 
 def class_keyboard():
     kb = InlineKeyboardMarkup(row_width=3)
@@ -203,6 +258,7 @@ def class_keyboard():
     )
     return kb
 
+
 def multi_keyboard(header, selected: set, prefix: str, ok_text: str):
     kb = InlineKeyboardMarkup(row_width=3)
     for row in chunk(header, 3):
@@ -211,8 +267,7 @@ def multi_keyboard(header, selected: set, prefix: str, ok_text: str):
             mark = "✅ " if item in selected else ""
             btns.append(
                 InlineKeyboardButton(
-                    text=f"{mark}{item}",
-                    callback_data=f"{prefix}:{item}",
+                    text=f"{mark}{item}", callback_data=f"{prefix}:{item}"
                 )
             )
         kb.row(*btns)
@@ -222,6 +277,7 @@ def multi_keyboard(header, selected: set, prefix: str, ok_text: str):
     )
     return kb
 
+
 # ========= Состояния =========
 CLASS_STATE = {}
 AUC_STATE = {}
@@ -230,32 +286,40 @@ QUEUE_STATE = {}
 
 # ========= HELP / START =========
 
+
 @dp.message_handler(commands=["start", "help_master"])
 async def help_master(message: types.Message):
     text = (
         "Команды:\n"
         "• /ник <имя> — регистрация/смена ника\n"
-        "• /класс — выбор класса (кнопки)\n"
-        "• /бм <число> — обновить БМ (с историей)\n"
+        "• /класс — выбор класса\n"
+        "• /бм <число> — обновить БМ\n"
         "• /профиль — твой профиль или /профиль @user — профиль игрока\n"
         "• /топбм — топ-5 прироста БМ за 7 дней\n"
         "• /нет <дд.мм> <причина> — отметить отсутствие\n"
-        "• /аук — выбор предметов аукциона (множественный + подтверждение)\n"
-        "• /очередь [предмет] — очередь по предмету или меню выбора\n"
+        "• /аук — выбор предметов аукциона\n"
+        "• /очередь [предмет] — очередь по предмету или меню\n"
         "• /мояочередь — твои места во всех очередях\n"
         "• /выйти [предмет] — выйти из очереди\n"
-        "• /забрал — отметить получение предметов и уйти в конец\n"
-        "• /список_предметов — список предметов аукциона\n"
+        "• /удалить <предмет> <ник> — снять из очереди (офицеры)\n"
+        "• /забрал — отметить полученные предметы\n"
+        "• /добавить_предмет / удалить_предмет — управление предметами\n"
+        "• /список_предметов — список предметов\n"
+        "• /привязать_инфо /привязать_аук /привязать_отсутствие — привязка тем\n"
+        "• /sync — синхронизировать игроков из Google Sheets (офицеры)\n"
+        "• /debug — только владелец\n"
     )
     reply = await message.answer(text)
     schedule_cleanup(message, reply)
 
+
 # ========= Привязки =========
+
 
 @dp.message_handler(commands=["привязать_инфо", "privyazat_info"])
 async def bind_info(message: types.Message):
     if message.chat.type not in ("group", "supergroup"):
-        return await message.answer("Команда доступна только в группе.")
+        return await message.answer("Только в группе.")
     if not await only_leader_officers(message):
         return await message.answer("Недостаточно прав.")
     mtid = getattr(message, "message_thread_id", None)
@@ -271,10 +335,11 @@ async def bind_info(message: types.Message):
     )
     schedule_cleanup(message, reply)
 
+
 @dp.message_handler(commands=["привязать_аук", "privyazat_auk"])
 async def bind_auction(message: types.Message):
     if message.chat.type not in ("group", "supergroup"):
-        return await message.answer("Команда доступна только в группе.")
+        return await message.answer("Только в группе.")
     if not await only_leader_officers(message):
         return await message.answer("Недостаточно прав.")
     mtid = getattr(message, "message_thread_id", None)
@@ -290,10 +355,11 @@ async def bind_auction(message: types.Message):
     )
     schedule_cleanup(message, reply)
 
+
 @dp.message_handler(commands=["привязать_отсутствие", "privyazat_ots"])
 async def bind_abs(message: types.Message):
     if message.chat.type not in ("group", "supergroup"):
-        return await message.answer("Команда доступна только в группе.")
+        return await message.answer("Только в группе.")
     if not await only_leader_officers(message):
         return await message.answer("Недостаточно прав.")
     mtid = getattr(message, "message_thread_id", None)
@@ -309,10 +375,11 @@ async def bind_abs(message: types.Message):
     )
     schedule_cleanup(message, reply)
 
+
 @dp.message_handler(commands=["отвязать_все", "otvyazat_vse"])
 async def unbind_all(message: types.Message):
     if message.chat.type not in ("group", "supergroup"):
-        return await message.answer("Команда доступна только в группе.")
+        return await message.answer("Только в группе.")
     if not await only_leader_officers(message):
         return await message.answer("Недостаточно прав.")
     async with aiosqlite.connect(DB) as conn:
@@ -320,10 +387,12 @@ async def unbind_all(message: types.Message):
         await set_setting(conn, "scope_topic_auction", "")
         await set_setting(conn, "scope_topic_absence", "")
     await load_scope()
-    reply = await message.answer("✅ Все привязки тем сняты. Бот остаётся привязан к группе.")
+    reply = await message.answer("✅ Все привязки тем сняты.")
     schedule_cleanup(message, reply)
 
+
 # ========= Профиль: ник / класс / БМ =========
+
 
 @dp.message_handler(commands=["ник", "nik"])
 async def cmd_nick(message: types.Message):
@@ -354,20 +423,24 @@ async def cmd_nick(message: types.Message):
     old_nicks = row[1] or "" if row else ""
 
     if old_nick and old_nick != new_nick:
-        if old_nicks:
-            old_nicks = old_nicks + ";" + old_nick
-        else:
-            old_nicks = old_nick
+        old_nicks = (old_nicks + ";" if old_nicks else "") + old_nick
 
     async with aiosqlite.connect(DB) as conn:
         if row:
             await conn.execute(
-                "UPDATE players SET nick=?, old_nicks=?, username=?, bm_updated=? WHERE tg_id=?",
+                """
+                UPDATE players
+                SET nick=?, old_nicks=?, username=?, bm_updated=?
+                WHERE tg_id=?
+                """,
                 (new_nick, old_nicks, username, now, tg_id),
             )
         else:
             await conn.execute(
-                "INSERT INTO players(tg_id,username,nick,old_nicks,bm_updated) VALUES(?,?,?,?,?)",
+                """
+                INSERT INTO players(tg_id,username,nick,old_nicks,bm_updated)
+                VALUES(?,?,?,?,?)
+                """,
                 (tg_id, username, new_nick, old_nicks, now),
             )
         await conn.commit()
@@ -386,12 +459,19 @@ async def cmd_nick(message: types.Message):
             gsheet.update_player(player)
             if old_nick and old_nick != new_nick:
                 gsheet.rename_everywhere(old_nick, new_nick)
-            gsheet.write_log(now, tg_id, new_nick, "update_nick", f"{old_nick} -> {new_nick}" if old_nick else "set")
+            gsheet.write_log(
+                now,
+                tg_id,
+                new_nick,
+                "update_nick",
+                f"{old_nick} -> {new_nick}" if old_nick else "set",
+            )
         except Exception as e:
             logging.warning(f"GSheet nick update failed: {e}")
 
     reply = await message.answer(f"Ник сохранён: {new_nick}")
     schedule_cleanup(message, reply)
+
 
 @dp.message_handler(commands=["класс", "klass"])
 async def cmd_class(message: types.Message):
@@ -411,6 +491,7 @@ async def cmd_class(message: types.Message):
     )
     schedule_cleanup(message, reply, bot_delay=30)
 
+
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith("class:"))
 async def class_pick(callback_query: types.CallbackQuery):
     tg_id = callback_query.from_user.id
@@ -418,7 +499,8 @@ async def class_pick(callback_query: types.CallbackQuery):
     if picked not in CLASS_LIST:
         return await callback_query.answer("Неизвестный класс")
     CLASS_STATE[tg_id] = picked
-    await callback_query.answer(f"Выбрано: {picked}", show_alert=False)
+    await callback_query.answer(f"Выбрано: {picked}")
+
 
 @dp.callback_query_handler(lambda c: c.data == "class_back")
 async def class_back(callback_query: types.CallbackQuery):
@@ -428,6 +510,7 @@ async def class_back(callback_query: types.CallbackQuery):
         reply_markup=class_keyboard()
     )
     await callback_query.answer("Выбор сброшен")
+
 
 @dp.callback_query_handler(lambda c: c.data == "class_ok")
 async def class_ok(callback_query: types.CallbackQuery):
@@ -444,8 +527,17 @@ async def class_ok(callback_query: types.CallbackQuery):
         base = await cur.fetchone()
         if not base:
             await conn.execute(
-                "INSERT INTO players(tg_id,username,class,bm_updated) VALUES(?,?,?,?)",
-                (tg_id, callback_query.from_user.username or callback_query.from_user.full_name, sel, now),
+                """
+                INSERT INTO players(tg_id,username,class,bm_updated)
+                VALUES(?,?,?,?)
+                """,
+                (
+                    tg_id,
+                    callback_query.from_user.username
+                    or callback_query.from_user.full_name,
+                    sel,
+                    now,
+                ),
             )
         else:
             await conn.execute(
@@ -456,7 +548,10 @@ async def class_ok(callback_query: types.CallbackQuery):
 
         if gsheet and gsheet.sheet:
             cur2 = await conn.execute(
-                "SELECT tg_id, username, nick, old_nicks, class, bm, bm_updated FROM players WHERE tg_id=?",
+                """
+                SELECT tg_id, username, nick, old_nicks, class, bm, bm_updated
+                FROM players WHERE tg_id=?
+                """,
                 (tg_id,),
             )
             pr = await cur2.fetchone()
@@ -472,12 +567,22 @@ async def class_ok(callback_query: types.CallbackQuery):
                 }
                 try:
                     gsheet.update_player(player)
-                    gsheet.write_log(now, tg_id, pr[2] or "", "update_class", sel)
+                    gsheet.write_log(
+                        now,
+                        tg_id,
+                        pr[2] or "",
+                        "update_class",
+                        sel,
+                    )
                 except Exception as e:
-                    logging.warning(f"GSheet class update failed: {e}")
+                    logging.warning(
+                        f"GSheet class update failed: {e}"
+                    )
 
     CLASS_STATE[tg_id] = None
-    await callback_query.message.edit_text(f"✅ Класс обновлён: {sel}")
+    await callback_query.message.edit_text(
+        f"✅ Класс обновлён: {sel}"
+    )
     asyncio.create_task(
         delete_later(
             callback_query.message.chat.id,
@@ -487,6 +592,7 @@ async def class_ok(callback_query: types.CallbackQuery):
     )
     await callback_query.answer("Сохранено")
 
+
 @dp.message_handler(commands=["бм", "bm"])
 async def cmd_bm(message: types.Message):
     if not in_scope(message, "info"):
@@ -495,13 +601,17 @@ async def cmd_bm(message: types.Message):
     if len(parts) < 2 or not parts[1].strip().isdigit():
         reply = await message.answer("Использование: /бм <число>")
         return schedule_cleanup(message, reply)
+
     new_bm = int(parts[1].strip())
     tg_id = message.from_user.id
     now = datetime.datetime.utcnow().isoformat()
 
     async with aiosqlite.connect(DB) as conn:
         cur = await conn.execute(
-            "SELECT nick,bm,class,username FROM players WHERE tg_id=?",
+            """
+            SELECT nick,bm,class,username
+            FROM players WHERE tg_id=?
+            """,
             (tg_id,),
         )
         row = await cur.fetchone()
@@ -521,8 +631,18 @@ async def cmd_bm(message: types.Message):
             (new_bm, now, tg_id),
         )
         await conn.execute(
-            "INSERT INTO bm_history(tg_id,nick,old_bm,new_bm,diff,ts) VALUES(?,?,?,?,?,?)",
-            (tg_id, nick, old_bm, new_bm, new_bm - old_bm, now),
+            """
+            INSERT INTO bm_history(tg_id,nick,old_bm,new_bm,diff,ts)
+            VALUES(?,?,?,?,?,?)
+            """,
+            (
+                tg_id,
+                nick,
+                old_bm,
+                new_bm,
+                new_bm - old_bm,
+                now,
+            ),
         )
         await conn.commit()
 
@@ -564,12 +684,14 @@ async def cmd_bm(message: types.Message):
     )
     schedule_cleanup(message, reply)
 
+
 @dp.message_handler(commands=["профиль", "profil"])
 async def cmd_profile(message: types.Message):
     if not in_scope(message, "info"):
         return
 
     args = message.get_args().strip()
+
     async with aiosqlite.connect(DB) as conn:
         if args:
             lookup = args.lstrip("@").strip()
@@ -593,12 +715,11 @@ async def cmd_profile(message: types.Message):
         row = await cur.fetchone()
 
     if not row:
-        if args:
-            reply = await message.answer("Профиль игрока не найден.")
-        else:
-            reply = await message.answer(
-                "Профиль не найден. Зарегистрируй ник: /ник <имя>"
-            )
+        reply = await message.answer(
+            "Профиль не найден. Зарегистрируй ник: /ник <имя>"
+            if not args
+            else "Профиль игрока не найден."
+        )
         return schedule_cleanup(message, reply, bot_delay=20)
 
     username, nick, old_nicks, cls, bm, bm_updated = row
@@ -618,11 +739,15 @@ async def cmd_profile(message: types.Message):
     reply = await message.answer(text)
     schedule_cleanup(message, reply, bot_delay=25)
 
+
 @dp.message_handler(commands=["топбм", "topbm"])
 async def cmd_topbm(message: types.Message):
     if not in_scope(message, "info"):
         return
-    week = (datetime.datetime.utcnow() - datetime.timedelta(days=7)).isoformat()
+    week = (
+        datetime.datetime.utcnow()
+        - datetime.timedelta(days=7)
+    ).isoformat()
     async with aiosqlite.connect(DB) as conn:
         cur = await conn.execute(
             """
@@ -640,12 +765,15 @@ async def cmd_topbm(message: types.Message):
         reply = await message.answer("Данных за 7 дней нет.")
         return schedule_cleanup(message, reply)
     text = "Топ прироста БМ за 7 дней:\n" + "\n".join(
-        f"{i+1}. {r[0]} (+{r[1]})" for i, r in enumerate(rows)
+        f"{i+1}. {r[0]} (+{r[1]})"
+        for i, r in enumerate(rows)
     )
     reply = await message.answer(text)
     schedule_cleanup(message, reply, bot_delay=25)
 
+
 # ========= Отсутствие =========
+
 
 @dp.message_handler(commands=["нет", "отсутствие", "net"])
 async def cmd_absence(message: types.Message):
@@ -663,7 +791,8 @@ async def cmd_absence(message: types.Message):
 
     async with aiosqlite.connect(DB) as conn:
         cur = await conn.execute(
-            "SELECT nick,username FROM players WHERE tg_id=?", (tg_id,)
+            "SELECT nick,username FROM players WHERE tg_id=?",
+            (tg_id,),
         )
         row = await cur.fetchone()
     if not row:
@@ -671,7 +800,6 @@ async def cmd_absence(message: types.Message):
             "Сначала зарегистрируй ник: /ник <имя>"
         )
         return schedule_cleanup(message, reply)
-
     nick, username = row[0], row[1]
 
     if gsheet and gsheet.sheet:
@@ -710,7 +838,9 @@ async def cmd_absence(message: types.Message):
     reply = await message.answer("Спасибо, отсутствие зафиксировано.")
     schedule_cleanup(message, reply, bot_delay=15)
 
+
 # ========= Вспомогательное для аукциона =========
+
 
 def get_items_safe():
     try:
@@ -721,7 +851,9 @@ def get_items_safe():
         logging.warning(f"get_items_safe error: {e}")
         return []
 
+
 # ========= Аукцион: выбор =========
+
 
 @dp.message_handler(commands=["аук", "auk"])
 async def cmd_auction(message: types.Message):
@@ -729,7 +861,7 @@ async def cmd_auction(message: types.Message):
         return
     if not (gsheet and gsheet.sheet):
         reply = await message.answer(
-            "Google Sheets недоступен. Проверь настройки."
+            "Google Sheets недоступен."
         )
         return schedule_cleanup(message, reply)
     header = get_items_safe()
@@ -741,12 +873,13 @@ async def cmd_auction(message: types.Message):
     tg_id = message.from_user.id
     AUC_STATE[tg_id] = set()
     reply = await message.answer(
-        "🎯 Выбери предметы аукциона (можно несколько):",
+        "🎯 Выбери предметы аукциона:",
         reply_markup=multi_keyboard(
             header, AUC_STATE[tg_id], "auc", "✅ Подтвердить"
         ),
     )
     schedule_cleanup(message, reply, bot_delay=60)
+
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith("auc:"))
 async def auc_toggle(callback_query: types.CallbackQuery):
@@ -754,7 +887,7 @@ async def auc_toggle(callback_query: types.CallbackQuery):
     item = callback_query.data.split(":", 1)[1]
     header = get_items_safe()
     if item not in header:
-        return await callback_query.answer("Предмет недоступен")
+        return await callback_query.answer("Недоступно")
     sel = AUC_STATE.setdefault(tg_id, set())
     if item in sel:
         sel.remove(item)
@@ -763,9 +896,12 @@ async def auc_toggle(callback_query: types.CallbackQuery):
         sel.add(item)
         note = f"Выбрано: {item}"
     await callback_query.message.edit_reply_markup(
-        reply_markup=multi_keyboard(header, sel, "auc", "✅ Подтвердить")
+        reply_markup=multi_keyboard(
+            header, sel, "auc", "✅ Подтвердить"
+        )
     )
     await callback_query.answer(note)
+
 
 @dp.callback_query_handler(lambda c: c.data == "auc_back")
 async def auc_back(callback_query: types.CallbackQuery):
@@ -778,6 +914,7 @@ async def auc_back(callback_query: types.CallbackQuery):
         )
     )
     await callback_query.answer("Выбор сброшен")
+
 
 @dp.callback_query_handler(lambda c: c.data == "auc_ok")
 async def auc_ok(callback_query: types.CallbackQuery):
@@ -793,7 +930,8 @@ async def auc_ok(callback_query: types.CallbackQuery):
         row = await cur.fetchone()
     if not row or not row[0]:
         return await callback_query.answer(
-            "Сначала зарегистрируй ник: /ник <имя>", show_alert=True
+            "Сначала зарегистрируй ник: /ник <имя>",
+            show_alert=True,
         )
     nick = row[0]
 
@@ -851,7 +989,9 @@ async def auc_ok(callback_query: types.CallbackQuery):
     )
     await callback_query.answer("Сохранено")
 
+
 # ========= Очередь: просмотр =========
+
 
 @dp.message_handler(commands=["очередь", "ochered"])
 async def cmd_queue(message: types.Message):
@@ -860,7 +1000,7 @@ async def cmd_queue(message: types.Message):
     parts = message.text.split(maxsplit=1)
     header = get_items_safe()
 
-    # Конкретный предмет
+    # Если указан конкретный предмет
     if len(parts) >= 2:
         item = parts[1].strip()
         if item not in header:
@@ -886,12 +1026,10 @@ async def cmd_queue(message: types.Message):
             reply = await message.answer(text)
             return schedule_cleanup(message, reply, bot_delay=15)
         except Exception as e:
-            reply = await message.answer(
-                "Ошибка: " + str(e)
-            )
+            reply = await message.answer("Ошибка: " + str(e))
             return schedule_cleanup(message, reply)
 
-    # Меню выбора нескольких предметов
+    # Меню выбора нескольких
     tg_id = message.from_user.id
     QUEUE_STATE[tg_id] = set()
     reply = await message.answer(
@@ -902,13 +1040,14 @@ async def cmd_queue(message: types.Message):
     )
     schedule_cleanup(message, reply, bot_delay=60)
 
+
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith("qsel:"))
 async def qsel_toggle(callback_query: types.CallbackQuery):
     tg_id = callback_query.from_user.id
     item = callback_query.data.split(":", 1)[1]
     header = get_items_safe()
     if item not in header:
-        return await callback_query.answer("Предмет недоступен")
+        return await callback_query.answer("Недоступно")
     sel = QUEUE_STATE.setdefault(tg_id, set())
     if item in sel:
         sel.remove(item)
@@ -923,6 +1062,7 @@ async def qsel_toggle(callback_query: types.CallbackQuery):
     )
     await callback_query.answer(note)
 
+
 @dp.callback_query_handler(lambda c: c.data == "qsel_back")
 async def qsel_back(callback_query: types.CallbackQuery):
     tg_id = callback_query.from_user.id
@@ -934,6 +1074,7 @@ async def qsel_back(callback_query: types.CallbackQuery):
         )
     )
     await callback_query.answer("Выбор сброшен")
+
 
 @dp.callback_query_handler(lambda c: c.data == "qsel_ok")
 async def qsel_ok(callback_query: types.CallbackQuery):
@@ -966,6 +1107,7 @@ async def qsel_ok(callback_query: types.CallbackQuery):
             else:
                 block = f"Очередь — {item}: пусто"
             blocks.append(block)
+
         username = (
             f"@{callback_query.from_user.username}"
             if callback_query.from_user.username
@@ -988,19 +1130,21 @@ async def qsel_ok(callback_query: types.CallbackQuery):
             "Ошибка: " + str(e)
         )
 
-# ========= Моя очередь (позиции во всех) =========
+
+# ========= Моя очередь =========
+
 
 @dp.message_handler(commands=["мояочередь", "moya_ochered"])
 async def my_queue_positions(message: types.Message):
     if not in_scope(message, "auction"):
         return
     if not (gsheet and gsheet.sheet):
-        reply = await message.answer("Google Sheets недоступен.")
+        reply = await message.answer(
+            "Google Sheets недоступен."
+        )
         return schedule_cleanup(message, reply)
 
     tg_id = message.from_user.id
-
-    # ищем ник игрока
     async with aiosqlite.connect(DB) as conn:
         cur = await conn.execute(
             "SELECT nick FROM players WHERE tg_id=?", (tg_id,)
@@ -1033,7 +1177,9 @@ async def my_queue_positions(message: types.Message):
                 positions.append(f"{item} — {pos} место")
             else:
                 positions.append(f"{item} — не участвуешь")
-        text = "📦 Твои позиции в очередях:\n\n" + "\n".join(positions)
+        text = "📦 Твои позиции в очередях:\n\n" + "\n".join(
+            positions
+        )
         reply = await message.answer(text)
         schedule_cleanup(message, reply, bot_delay=40)
     except Exception as e:
@@ -1042,8 +1188,10 @@ async def my_queue_positions(message: types.Message):
         )
         schedule_cleanup(message, reply)
 
+
 # ========= Выйти / удалить / забрал =========
-# (оставлены как в твоём коде; логика не менялась, только логирование)
+# (логика как раньше, с логированием)
+
 
 @dp.message_handler(commands=["выйти", "viyti"])
 async def cmd_leave(message: types.Message):
@@ -1107,6 +1255,7 @@ async def cmd_leave(message: types.Message):
     reply = await message.answer(msg)
     schedule_cleanup(message, reply)
 
+
 @dp.message_handler(commands=["удалить", "udalit"])
 async def cmd_remove(message: types.Message):
     if not in_scope(message, "auction"):
@@ -1159,6 +1308,7 @@ async def cmd_remove(message: types.Message):
     )
     schedule_cleanup(message, reply)
 
+
 @dp.message_handler(commands=["забрал", "zabral"])
 async def cmd_zabral(message: types.Message):
     if not in_scope(message, "auction"):
@@ -1179,6 +1329,7 @@ async def cmd_zabral(message: types.Message):
         ),
     )
     schedule_cleanup(message, reply, bot_delay=60)
+
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith("zabral:"))
 async def zabral_toggle(callback_query: types.CallbackQuery):
@@ -1201,6 +1352,7 @@ async def zabral_toggle(callback_query: types.CallbackQuery):
     )
     await callback_query.answer(note)
 
+
 @dp.callback_query_handler(lambda c: c.data == "zabral_back")
 async def zabral_back(callback_query: types.CallbackQuery):
     tg_id = callback_query.from_user.id
@@ -1212,6 +1364,7 @@ async def zabral_back(callback_query: types.CallbackQuery):
         )
     )
     await callback_query.answer("Выбор сброшен")
+
 
 @dp.callback_query_handler(lambda c: c.data == "zabral_ok")
 async def zabral_ok(callback_query: types.CallbackQuery):
@@ -1227,7 +1380,8 @@ async def zabral_ok(callback_query: types.CallbackQuery):
         row = await cur.fetchone()
     if not row or not row[0]:
         return await callback_query.answer(
-            "Сначала зарегистрируй ник: /ник <имя>", show_alert=True
+            "Сначала зарегистрируй ник: /ник <имя>",
+            show_alert=True,
         )
     nick = row[0]
 
@@ -1284,7 +1438,9 @@ async def zabral_ok(callback_query: types.CallbackQuery):
     )
     await callback_query.answer("Сохранено")
 
+
 # ========= Управление предметами =========
+
 
 @dp.message_handler(commands=["добавить_предмет", "dobavit_predmet"])
 async def add_item_cmd(message: types.Message):
@@ -1304,7 +1460,7 @@ async def add_item_cmd(message: types.Message):
         created = gsheet.add_item(name)
         if created:
             reply = await message.answer(
-                f"🆕 Предмет «{name}» добавлен в аукцион!"
+                f"🆕 Предмет «{name}» добавлен."
             )
             gsheet.write_log(
                 datetime.datetime.utcnow().isoformat(),
@@ -1314,12 +1470,15 @@ async def add_item_cmd(message: types.Message):
                 name,
             )
         else:
-            reply = await message.answer("Такой предмет уже существует.")
+            reply = await message.answer(
+                "Такой предмет уже существует."
+            )
     except Exception as e:
         reply = await message.answer(
             "Ошибка Google Sheets: " + str(e)
         )
     schedule_cleanup(message, reply)
+
 
 @dp.message_handler(commands=["удалить_предмет", "udalit_predmet"])
 async def del_item_cmd(message: types.Message):
@@ -1339,7 +1498,7 @@ async def del_item_cmd(message: types.Message):
         ok = gsheet.remove_item(name)
         if ok:
             reply = await message.answer(
-                f"🗑 Предмет «{name}» удалён из аукциона!"
+                f"🗑 Предмет «{name}» удалён."
             )
             gsheet.write_log(
                 datetime.datetime.utcnow().isoformat(),
@@ -1355,6 +1514,7 @@ async def del_item_cmd(message: types.Message):
             "Ошибка Google Sheets: " + str(e)
         )
     schedule_cleanup(message, reply)
+
 
 @dp.message_handler(commands=["список_предметов", "spisok_predmetov"])
 async def list_items_cmd(message: types.Message):
@@ -1374,13 +1534,11 @@ async def list_items_cmd(message: types.Message):
     reply = await message.answer(text)
     schedule_cleanup(message, reply)
 
+
 # ========= Синхронизация игроков из Google Sheets =========
 
+
 async def sync_players_from_gsheet_to_db() -> int:
-    """
-    Однократная загрузка игроков из вкладки 'Игроки' в локальную БД.
-    Вызывается при старте и из /sync.
-    """
     if not (gsheet and gsheet.sheet):
         return 0
     try:
@@ -1402,18 +1560,48 @@ async def sync_players_from_gsheet_to_db() -> int:
             if not any(row):
                 continue
             try:
-                tg_id = int(row[idx["tg_id"]]) if "tg_id" in idx and row[idx["tg_id"]] else None
+                tg_id = (
+                    int(row[idx["tg_id"]])
+                    if "tg_id" in idx and row[idx["tg_id"]]
+                    else None
+                )
             except:
                 tg_id = None
-            nick = row[idx["nick"]] if "nick" in idx and len(row) > idx["nick"] else ""
+            nick = (
+                row[idx["nick"]]
+                if "nick" in idx and len(row) > idx["nick"]
+                else ""
+            )
             if not (tg_id or nick):
                 continue
-            username = row[idx["telegram"]].lstrip("@") if "telegram" in idx and len(row) > idx["telegram"] else None
-            old_nicks = row[idx["old_nicks"]] if "old_nicks" in idx and len(row) > idx["old_nicks"] else ""
-            cls = row[idx["class"]] if "class" in idx and len(row) > idx["class"] else ""
-            bm_str = row[idx["current_bm"]] if "current_bm" in idx and len(row) > idx["current_bm"] else ""
+            username = (
+                row[idx["telegram"]].lstrip("@")
+                if "telegram" in idx and len(row) > idx["telegram"]
+                else None
+            )
+            old_nicks = (
+                row[idx["old_nicks"]]
+                if "old_nicks" in idx and len(row) > idx["old_nicks"]
+                else ""
+            )
+            cls = (
+                row[idx["class"]]
+                if "class" in idx and len(row) > idx["class"]
+                else ""
+            )
+            bm_str = (
+                row[idx["current_bm"]]
+                if "current_bm" in idx
+                and len(row) > idx["current_bm"]
+                else ""
+            )
             bm = int(bm_str) if bm_str.isdigit() else None
-            bm_updated = row[idx["bm_updated"]] if "bm_updated" in idx and len(row) > idx["bm_updated"] else ""
+            bm_updated = (
+                row[idx["bm_updated"]]
+                if "bm_updated" in idx
+                and len(row) > idx["bm_updated"]
+                else ""
+            )
 
             if tg_id:
                 await conn.execute(
@@ -1438,26 +1626,11 @@ async def sync_players_from_gsheet_to_db() -> int:
                         bm_updated,
                     ),
                 )
-            else:
-                await conn.execute(
-                    """
-                    INSERT OR IGNORE INTO players(tg_id,username,nick,old_nicks,class,bm,bm_updated)
-                    VALUES(?,?,?,?,?,?,?)
-                    """,
-                    (
-                        0,
-                        username,
-                        nick,
-                        old_nicks,
-                        cls,
-                        bm,
-                        bm_updated,
-                    ),
-                )
             count += 1
         await conn.commit()
     logging.info(f"Players sync: {count} rows")
     return count
+
 
 @dp.message_handler(commands=["синхронизировать", "sync"])
 async def manual_sync(message: types.Message):
@@ -1475,12 +1648,16 @@ async def manual_sync(message: types.Message):
         f"✅ Синхронизация завершена.\nОбновлено игроков: {count}"
     )
 
+
 # ========= DEBUG (только владелец) =========
+
 
 @dp.message_handler(commands=["debug"])
 async def debug_cmd(message: types.Message):
     if not is_leader(message):
-        await message.reply("🚫 Команда доступна только владельцу бота.")
+        await message.reply(
+            "🚫 Команда доступна только владельцу бота."
+        )
         return
     info = (
         "🧩 Debug info:\n"
@@ -1492,69 +1669,75 @@ async def debug_cmd(message: types.Message):
     )
     await message.reply(info, parse_mode="Markdown")
 
-# ========= Подсказка при неверных сообщениях =========
 
-@dp.message_handler(lambda m: m.text and not m.text.startswith("/") and SCOPE_CHAT_ID and m.chat.id == SCOPE_CHAT_ID)
-async def wrong_message_hint(message: types.Message):
-    # Без автоудаления, просто подсказка в чат в привязанной группе
-    hint = await message.reply(
-        f"💡 @{message.from_user.username or message.from_user.full_name}, "
-        "используй команды бота:\n"
-        "/профиль, /аук, /очередь, /мояочередь, /топбм, /help_master"
-    )
-    schedule_cleanup(message, hint, user_delay=0, bot_delay=15)
+# ========= Автоудаление неверных сообщений в теме инфо =========
+
+@dp.message_handler(
+    lambda m: m.text
+    and not m.text.startswith("/")
+    and SCOPE_CHAT_ID
+    and SCOPE_TOPIC_INFO
+    and m.chat.id == SCOPE_CHAT_ID
+    and getattr(m, "message_thread_id", None) == SCOPE_TOPIC_INFO
+)
+async def auto_delete_wrong_in_info(message: types.Message):
+    # Не трогаем лидера и офицеров
+    if is_leader(message) or is_officer(message):
+        return
+
+    try:
+        await message.delete()
+    except Exception as e:
+        logging.debug(f"auto_delete_wrong_in_info: can't delete user msg: {e}")
+        return
+
+    try:
+        hint = await bot.send_message(
+            chat_id=message.chat.id,
+            text=(
+                f"💡 @{message.from_user.username or message.from_user.full_name}, "
+                "в этой теме можно писать только команды бота.\n"
+                "Используй: /профиль, /аук, /очередь, /мояочередь, /топбм, /help_master"
+            ),
+            message_thread_id=message.message_thread_id,
+        )
+        asyncio.create_task(
+            delete_later(hint.chat.id, hint.message_id, 10)
+        )
+    except Exception as e:
+        logging.debug(f"auto_delete_wrong_in_info: can't send hint: {e}")
+
 
 # ========= Startup =========
 
+
 async def on_startup(_):
     await init_db()
+    await ensure_settings_table()
     await load_scope()
     await set_commands()
 
-    # Однократная синхронизация игроков из Google Sheets в локальную БД
+    # Однократная синхронизация игроков
     count = await sync_players_from_gsheet_to_db()
 
-    # Уведомление владельцу в личку
+    # Личное уведомление владельцу
     await send_to_leader(
         "🤖 WinxClubSup обновлён и запущен\n\n"
         "📋 Версия: v3.4\n"
         "🧩 Изменения:\n"
-        "— автозагрузка игроков из вкладки 'Игроки' при старте\n"
-        "— /профиль @user для просмотра чужих профилей\n"
-        "— /мояочередь для просмотра позиций во всех очередях\n"
-        "— улучшенная /sync и /debug\n"
-        "— подсказки по командам в чате\n\n"
+        "— автозагрузка игроков из листа 'Игроки' при старте\n"
+        "— /профиль @user и /мояочередь\n"
+        "— ручной /sync\n"
+        "— автоудаление лишних сообщений в теме инфо\n"
+        "— расширенные аукцион и очереди\n\n"
         f"👥 Подгружено игроков: {count}"
     )
-
-    # При желании можно включить сообщения о запуске в темы
-    if os.getenv("STARTUP_ANNOUNCE") and SCOPE_CHAT_ID:
-        try:
-            if SCOPE_TOPIC_INFO:
-                await bot.send_message(
-                    SCOPE_CHAT_ID,
-                    "✅ Бот запущен (инфо).",
-                    message_thread_id=SCOPE_TOPIC_INFO,
-                )
-            if SCOPE_TOPIC_AUCTION:
-                await bot.send_message(
-                    SCOPE_CHAT_ID,
-                    "✅ Бот запущен (аукцион).",
-                    message_thread_id=SCOPE_TOPIC_AUCTION,
-                )
-            if SCOPE_TOPIC_ABS:
-                await bot.send_message(
-                    SCOPE_CHAT_ID,
-                    "✅ Бот запущен (отсутствия).",
-                    message_thread_id=SCOPE_TOPIC_ABS,
-                )
-        except Exception as e:
-            logging.warning(f"Startup announce failed: {e}")
 
     logging.info(
         f"Bot started; scope: chat_id={SCOPE_CHAT_ID}, "
         f"info={SCOPE_TOPIC_INFO}, auction={SCOPE_TOPIC_AUCTION}, abs={SCOPE_TOPIC_ABS}"
     )
+
 
 if __name__ == "__main__":
     executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
