@@ -325,12 +325,12 @@ async def bind_info(message: types.Message):
         await set_setting(conn, "scope_chat_id", str(message.chat.id))
         await set_setting(conn, "scope_topic_info", str(mtid))
     reply = await message.answer(
-        f"✅ Привязано: тема <b>ИНФО</b>.<br>"
-        f"<b>chat_id:</b> <code>{message.chat.id}</code><br>"
+        f"✅ Привязано: тема <b>ИНФО</b>\n"
+        f"<b>chat_id:</b> <code>{message.chat.id}</code>\n"
         f"<b>info_topic_id:</b> <code>{mtid}</code>",
         parse_mode="HTML",
     )
-    await delete_later(reply, 10)
+    await delete_later(message.chat.id, reply.message_id, 10)
 
 
 @dp.message_handler(commands=["привязать_аук"])
@@ -342,12 +342,12 @@ async def bind_auction(message: types.Message):
         await set_setting(conn, "scope_chat_id", str(message.chat.id))
         await set_setting(conn, "scope_topic_auction", str(mtid))
     reply = await message.answer(
-        f"✅ Привязано: тема <b>АУК</b>.<br>"
-        f"<b>chat_id:</b> <code>{message.chat.id}</code><br>"
+        f"✅ Привязано: тема <b>АУК</b>\n"
+        f"<b>chat_id:</b> <code>{message.chat.id}</code>\n"
         f"<b>auction_topic_id:</b> <code>{mtid}</code>",
         parse_mode="HTML",
     )
-    await delete_later(reply, 10)
+    await delete_later(message.chat.id, reply.message_id, 10)
 
 
 @dp.message_handler(commands=["привязать_отсутствие"])
@@ -359,12 +359,12 @@ async def bind_abs(message: types.Message):
         await set_setting(conn, "scope_chat_id", str(message.chat.id))
         await set_setting(conn, "scope_topic_absence", str(mtid))
     reply = await message.answer(
-        f"✅ Привязано: тема <b>ОТСУТСТВИЯ</b>.<br>"
-        f"<b>chat_id:</b> <code>{message.chat.id}</code><br>"
+        f"✅ Привязано: тема <b>ОТСУТСТВИЯ</b>\n"
+        f"<b>chat_id:</b> <code>{message.chat.id}</code>\n"
         f"<b>absence_topic_id:</b> <code>{mtid}</code>",
         parse_mode="HTML",
     )
-    await delete_later(reply, 10)
+    await delete_later(message.chat.id, reply.message_id, 10)
 
 
 @dp.message_handler(commands=["отвязать_все", "otvyazat_vse"])
