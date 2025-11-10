@@ -28,7 +28,7 @@ OFFICERS = [
     .replace(" ", "")
     .split(",")
     if s
-] or ["@Maffins89", "@Gi_Di_Al", "@oOMEMCH1KOo", "@Ferbi55", "@Ahaha_Ohoho"]
+] or ["@Maffins89", "@Gi_Di_Al", "@oOMEMCH1KOo", "@Ferbi55", "@Ahaha_Ohoho", "@yakovlef"]
 
 CLASS_LIST = [
     "Вульпин",
