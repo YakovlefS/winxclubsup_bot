@@ -1661,6 +1661,39 @@ async def debug_cmd(message: types.Message):
     await message.reply(info, parse_mode="Markdown")
 
 
+# ========= Интеллектуальные подсказки =========
+
+@dp.message_handler(lambda m: m.text and not m.text.startswith("/"))
+async def smart_hint(message: types.Message):
+    """Анализирует текст пользователя и предлагает нужную команду"""
+    text = message.text.strip().lower()
+    hint = None
+
+    if text.startswith("ник") or "имя" in text:
+        hint = "💡 Похоже, ты хочешь изменить ник.\nИспользуй команду: /ник <новый_ник>"
+    elif "бм" in text or text.replace(" ", "").isdigit():
+        hint = "💡 Чтобы обновить боевую мощь, напиши: /бм <число>"
+    elif "класс" in text:
+        hint = "💡 Выбери класс через команду: /класс"
+    elif "пропуск" in text or "отсутств" in text or "не смогу" in text:
+        hint = "💡 Чтобы отметить отсутствие, используй: /нет <дд.мм> <причина>"
+    elif "аук" in text or "очеред" in text:
+        hint = "💡 Для аукциона и очередей используй: /аук или /очередь"
+    elif "проф" in text or "мой бм" in text:
+        hint = "💡 Посмотри свой профиль через: /профиль"
+    elif "топ" in text:
+        hint = "💡 Чтобы увидеть топ-5 по БМ, введи: /топбм"
+
+    if hint:
+        try:
+            reply = await message.reply(hint)
+            await asyncio.sleep(10)
+            await safe_delete(message.chat.id, message.message_id)
+            await safe_delete(reply.chat.id, reply.message_id)
+        except Exception as e:
+            logging.debug(f"smart_hint delete failed: {e}")
+
+
 # ========= Автоудаление неверных сообщений в теме инфо =========
 
 @dp.message_handler(
@@ -1728,6 +1761,66 @@ async def on_startup(_):
         f"Bot started; scope: chat_id={SCOPE_CHAT_ID}, "
         f"info={SCOPE_TOPIC_INFO}, auction={SCOPE_TOPIC_AUCTION}, abs={SCOPE_TOPIC_ABS}"
     )
+
+# ========= Универсальные функции =========
+
+def user_tag(user: types.User) -> str:
+    """Возвращает @username или Имя Фамилия"""
+    return f"@{user.username}" if user.username else f"{user.full_name}"
+
+
+async def safe_delete(chat_id: int, message_id: int):
+    """Безопасное удаление сообщений"""
+    try:
+        await bot.delete_message(chat_id, message_id)
+    except Exception as e:
+        logging.debug(f"safe_delete failed: {e}")
+
+
+# ========= Главное меню =========
+
+@dp.message_handler(commands=["menu", "меню"])
+async def main_menu(message: types.Message):
+    """Отображает главное меню с основными командами"""
+    user_name = user_tag(message.from_user)
+    await safe_delete(message.chat.id, message.message_id)
+
+    kb = InlineKeyboardMarkup(row_width=2)
+    kb.add(
+        InlineKeyboardButton("👤 Профиль", callback_data="menu_profile"),
+        InlineKeyboardButton("💪 Обновить БМ", callback_data="menu_bm"),
+        InlineKeyboardButton("⚔️ Аукцион", callback_data="menu_auk"),
+        InlineKeyboardButton("📜 Очередь", callback_data="menu_queue"),
+        InlineKeyboardButton("🛌 Отсутствие", callback_data="menu_abs"),
+        InlineKeyboardButton("🏆 Топ БМ", callback_data="menu_topbm"),
+    )
+    reply = await message.answer(f"📋 Главное меню для {user_name}:", reply_markup=kb)
+    schedule_cleanup(message, reply, bot_delay=40)
+
+
+@dp.callback_query_handler(lambda c: c.data.startswith("menu_"))
+async def menu_handler(callback_query: types.CallbackQuery):
+    cmd = callback_query.data
+    user = callback_query.from_user
+    username = user_tag(user)
+    text = None
+
+    if cmd == "menu_profile":
+        text = f"👤 {username}, введи /профиль чтобы увидеть свой профиль."
+    elif cmd == "menu_bm":
+        text = "💪 Чтобы обновить БМ: /бм <число>"
+    elif cmd == "menu_auk":
+        text = "⚔️ Аукцион: /аук — выбрать предметы"
+    elif cmd == "menu_queue":
+        text = "📜 Очередь: /очередь [название] — посмотреть очередь"
+    elif cmd == "menu_abs":
+        text = "🛌 Отсутствие: /нет <дд.мм> <причина>"
+    elif cmd == "menu_topbm":
+        text = "🏆 Топ-5 по приросту БМ: /топбм"
+
+    if text:
+        await callback_query.message.answer(text)
+    await callback_query.answer()
 
 
 if __name__ == "__main__":
